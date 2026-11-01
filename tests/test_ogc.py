@@ -79,6 +79,10 @@ class Handler(BaseHTTPRequestHandler):
             elif q.get("layers") == "tileonly" and q.get("width") != "256":
                 self.reply(b'<?xml version="1.0"?><ServiceExceptionReport><ServiceException>'
                            b'java.lang.NullPointerException</ServiceException></ServiceExceptionReport>', "text/xml")
+            elif q.get("layers") == "finefail" and q.get("width") and (
+                    abs(float(q["bbox"].split(",")[2]) - float(q["bbox"].split(",")[0])) / float(q["width"]) < 0.25):
+                self.reply(b'<?xml version="1.0"?><ServiceExceptionReport><ServiceException>'
+                           b'java.lang.NullPointerException</ServiceException></ServiceExceptionReport>', "text/xml")
             elif q.get("layers") == "blank":
                 buf = io.BytesIO()
                 Image.new("RGBA", (int(q["width"]), int(q["height"])), (0, 0, 0, 0)).save(buf, "PNG")
@@ -144,6 +148,8 @@ def test_wms_capabilities_parsing(server):
     # web-map zoom 19 is about 1:1066 and every zoom level halves the scale denominator
     assert zmin == pytest.approx(11.45, abs=0.05) and zmax == pytest.approx(19.09, abs=0.05)
     assert names["only4326"].min_scale is None and names["only4326"].zoom_range() == (None, None)
+    assert names["ortho"].native_zoom() == 19 and names["only4326"].native_zoom() == 19
+    assert ogc.WmsLayer("x", "x", [], None, min_scale=5000.0).native_zoom() == 16  # 1:5000 is about zoom 16.8
     assert ogc.choose_crs(names["ortho"].crs) == "EPSG:3857"  # Web Mercator is the preferred request CRS
 
 
