@@ -368,6 +368,7 @@ def tab_map():
             except Exception:  # noqa: BLE001 - overlay is a convenience only
                 pass
         st.session_state.pop("probe", None)
+        st.session_state.pop("auto_fail", None)
         st.session_state.update(map_key=map_key, base_map=base, map_ver=st.session_state.get("map_ver", 0) + 1,
                                 click_seen=None)
         # small coverages (e.g. one drone flight): preselect its centre so a square is visible straight away
@@ -416,7 +417,20 @@ def tab_map():
     else:
         st.success(f"Área válida: {side:.0f} m de lado dentro de la cobertura de la capa.")
 
-    with st.expander("🌐 Descargar la imagen con su navegador (si la descarga automática falla)"):
+    fail = st.session_state.get("auto_fail")
+    if fail and fail.get("key") == st.session_state.get("map_key"):
+        st.error(f"La descarga automática falló: {fail['msg']}")
+        st.warning("**Este servicio no responde a la descarga automática de la app**, aunque sí a su navegador (por "
+                   "eso ve la capa en el mapa). Use el panel **🌐 Descargar la imagen con su navegador**, abierto aquí "
+                   "abajo: abra la imagen, guárdela y súbala.")
+        if fail.get("attempts"):
+            with st.expander("Detalles técnicos de la descarga automática"):
+                for a in fail["attempts"]:
+                    st.markdown(f"**{a['crs']}** — {'✅ ok' if a['ok'] else '❌ ' + a.get('error', '')}")
+                    st.code(a["url"], language=None)
+    else:
+        fail = None
+    with st.expander("🌐 Descargar la imagen con su navegador (si la descarga automática falla)", expanded=bool(fail)):
         st.caption("Algunos servicios responden a su navegador (por eso ve la capa en el mapa) pero no al servidor de "
                    "esta app. En ese caso descargue usted la imagen del cuadrado y súbala: la app la georreferencia con "
                    "el mismo recuadro y sistema de coordenadas que pidió. Compruebe las condiciones de uso del servicio.")
@@ -471,6 +485,7 @@ def tab_map():
             if r["url"]:
                 st.code(r["url"], language=None)
 
+    rerun_needed = False
     if st.button("▶ Descargar área y ejecutar inferencia", type="primary", disabled=problem is not None):
         if not _JOB_LOCK.acquire(blocking=False):
             st.warning("Hay otra inferencia en curso. Intente de nuevo en unos segundos.")
@@ -484,20 +499,22 @@ def tab_map():
             try:
                 with st.spinner("Pidiendo la imagen al WMS (una sola petición)…"):
                     img = ogc.wms_get_map(wms_url, layer.name, bbox, layer.crs, caps.version, adv_gsd)
+            except ogc.OGCServiceError as exc:
+                # the service answered with an error: remember it for this service/layer and reopen the page with
+                # the browser-download panel expanded (the lock is released by ``finally`` before the rerun)
+                st.session_state["auto_fail"] = {"key": st.session_state.get("map_key"), "msg": str(exc),
+                                                 "attempts": getattr(exc, "attempts", None)}
+                rerun_needed = True
+                return
             except (ogc.OGCError, ValueError) as exc:
                 st.error(f"No se pudo obtener la imagen: {exc}")
-                attempts = getattr(exc, "attempts", None)
-                if attempts:
-                    st.caption("El servicio rechazó la petición con cada sistema de coordenadas disponible (hasta 3 "
-                               "intentos). El error viene del servidor del WMS, no de la app: pruebe otra capa u otra zona.")
-                    with st.expander("Detalles técnicos (para reproducirlo en el navegador)"):
-                        for a in attempts:
-                            st.markdown(f"**{a['crs']}** — {'✅ ok' if a['ok'] else '❌ ' + a.get('error', '')}")
-                            st.code(a["url"], language=None)
                 return
+            st.session_state.pop("auto_fail", None)
             _process_and_show(img, predictor, adv_thr, adv_min_area, adv_prob, "WMS descargada")
         finally:
             _JOB_LOCK.release()
+            if rerun_needed:
+                st.rerun()
 
 
 tabs = st.tabs(["Imagen propia", "Mapa WMS (cualquier servicio)"])
