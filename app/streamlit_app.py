@@ -22,10 +22,14 @@ from pathlib import Path
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if _SRC.is_dir():
     sys.path[:] = [str(_SRC)] + [p for p in sys.path if p != str(_SRC)]  # repository source first
-    _loaded = sys.modules.get("quito_building_lab")
-    if _loaded is not None and not str(getattr(_loaded, "__file__", "")).startswith(str(_SRC)):
+    # A hosted process outlives deploys: Python keeps imported modules in memory, so new code on disk would not
+    # be used until a restart. Drop the package's modules whenever its source files change (and on first run, in
+    # case a stale installed copy was imported earlier in this process) so they are imported again.
+    _sig = tuple(sorted((f.name, f.stat().st_mtime_ns) for f in (_SRC / "quito_building_lab").glob("*.py")))
+    if getattr(sys, "_qbl_src_signature", None) != _sig:
         for _m in [k for k in sys.modules if k == "quito_building_lab" or k.startswith("quito_building_lab.")]:
-            del sys.modules[_m]  # a stale copy was already imported in this long-lived process
+            del sys.modules[_m]
+        sys._qbl_src_signature = _sig
 
 import folium
 import numpy as np
