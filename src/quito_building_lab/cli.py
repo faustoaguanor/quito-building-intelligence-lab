@@ -115,6 +115,54 @@ def cmd_export(args) -> int:
     return 0
 
 
+def cmd_wms_layers(args) -> int:
+    from . import ogc
+
+    if args.wfs:
+        caps = ogc.wfs_capabilities(args.url)
+        rows = [{"name": f.name, "title": f.title, "default_crs": f.default_crs} for f in caps.feature_types]
+    else:
+        caps = ogc.wms_capabilities(args.url)
+        rows = [{"name": layer.name, "title": layer.title, "crs": layer.crs[:6]} for layer in caps.layers]
+    print(json.dumps({"url": args.url, "version": caps.version, "count": len(rows), "items": rows[: args.limit]},
+                     indent=2, ensure_ascii=False))
+    return 0
+
+
+def cmd_fetch_area(args) -> int:
+    """One small WMS GetMap (+ optional WFS GetFeature) for a user-chosen area. Never bulk-downloads."""
+    from pathlib import Path
+
+    from . import ogc
+
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    bbox = tuple(args.bbox)
+    if not (-180 <= bbox[0] < bbox[2] <= 180 and -90 <= bbox[1] < bbox[3] <= 90):
+        raise ValueError("--bbox must be W S E N in lon/lat degrees (west < east, south < north)")
+    caps = ogc.wms_capabilities(args.wms_url)
+    layer = next((layer for layer in caps.layers if layer.name == args.layer), None)
+    if layer is None:
+        raise ValueError(f"Layer '{args.layer}' not found; list layers with `qbl wms-layers {args.wms_url}`")
+    img = ogc.wms_get_map(args.wms_url, args.layer, bbox, layer.crs, caps.version, args.target_gsd,
+                          max_side=args.max_side)
+    tif = ogc.write_geotiff(img, str(out / "wms_area.tif"))
+    result = {"image": tif, "wms": img.meta}
+    if args.wfs_url:
+        from .reference import reference_from_geojson
+
+        data, info = ogc.wfs_get_features(args.wfs_url, args.wfs_type, bbox, args.wfs_srs or img.crs,
+                                          max_features=args.max_features)
+        data["crs"] = {"type": "name", "properties": {"name": f"urn:ogc:def:crs:{info['srs'].replace(':', '::')}"}}
+        ref_path = out / "reference.geojson"
+        ref_path.write_text(json.dumps(data), encoding="utf-8")
+        _, rep = reference_from_geojson(data, info["srs"], args.reference_kind, source=args.wfs_url)
+        result.update({"reference": str(ref_path), "wfs": info, "reference_import": rep.to_dict()})
+    (out / "fetch_provenance.json").write_text(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    print(json.dumps(result, indent=2, ensure_ascii=False, default=str))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(prog="qbl", description="Quito Building Intelligence Lab")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -147,6 +195,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--min-coverage", type=float, default=0.1)
     p.set_defaults(func=cmd_compare)
 
+    p = sub.add_parser("wms-layers", help="list the layers of a WMS (or WFS with --wfs) with one GetCapabilities request")
+    p.add_argument("url")
+    p.add_argument("--wfs", action="store_true")
+    p.add_argument("--limit", type=int, default=100)
+    p.set_defaults(func=cmd_wms_layers)
+
+    p = sub.add_parser("fetch-area", help="fetch ONE small WMS image (and optional WFS polygons) for a bbox")
+    p.add_argument("--wms-url", required=True)
+    p.add_argument("--layer", required=True)
+    p.add_argument("--bbox", type=float, nargs=4, required=True, metavar=("W", "S", "E", "N"),
+                   help="lon/lat degrees (WGS 84)")
+    p.add_argument("--out", required=True)
+    p.add_argument("--target-gsd", type=float, default=0.3)
+    p.add_argument("--max-side", type=int, default=512)
+    p.add_argument("--wfs-url")
+    p.add_argument("--wfs-type", help="WFS feature type (e.g. workspace:layer)")
+    p.add_argument("--wfs-srs", help="projected CRS for the WFS request (default: same as the image)")
+    p.add_argument("--max-features", type=int, default=2000)
+    p.add_argument("--reference-kind", default="uc", choices=["construction", "block", "uc", "other"])
+    p.set_defaults(func=cmd_fetch_area)
+
     p = sub.add_parser("info", help="validate raster metadata")
     p.add_argument("input")
     p.set_defaults(func=cmd_info)
@@ -167,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO if args.verbose else logging.WARNING, format="%(levelname)s %(message)s")
     try:
         return args.func(args)
-    except (ValueError, RuntimeError, FileNotFoundError) as exc:
+    except (ValueError, RuntimeError, FileNotFoundError) as exc:  # includes OGCError, CRSError
         print(f"error: {exc}", file=sys.stderr)
         return 2
 

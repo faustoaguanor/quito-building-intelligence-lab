@@ -90,6 +90,8 @@ def run_raster(
     reference_crs: str | None = None,
     reference_id_field: str | None = None,
     reviewed_labels: str | None = None,
+    reference_set: FootprintSet | None = None,
+    reference_report: dict | None = None,
     predictor: Predictor | None = None,
     progress: ProgressFn | None = None,
 ) -> PipelineOutput:
@@ -108,10 +110,14 @@ def run_raster(
     }
     m = None
     det = None
-    if reference:
-        ref_fs, ref_rep = load_reference(reference, reference_layer, cfg.matching.reference_kind,
-                                         reference_crs, reference_id_field)
-        report["reference_import"] = ref_rep.to_dict()
+    if reference or reference_set is not None:
+        if reference_set is not None:
+            ref_fs = reference_set
+            report["reference_import"] = reference_report or {"source": "in-memory reference set"}
+        else:
+            ref_fs, ref_rep = load_reference(reference, reference_layer, cfg.matching.reference_kind,
+                                             reference_crs, reference_id_field)
+            report["reference_import"] = ref_rep.to_dict()
         if cand.crs is None:
             report["correspondence"] = {"status": "not_evaluated", "reason": "input raster has no CRS"}
         else:

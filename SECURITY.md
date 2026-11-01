@@ -4,3 +4,4 @@
 - Only the pinned, checksum-verified checkpoint is loaded (`torch.load(weights_only=True)`); arbitrary user checkpoints are not accepted by the app. Never load untrusted pickle files.
 - Never commit tokens or restricted data; the Streamlit demo reads `QBL_ONNX_URL`/`QBL_ONNX_SHA256` from environment/secrets only.
 - TLS verification is never disabled.
+- User-supplied WMS/WFS URLs: https only, hosts resolving to private/loopback/link-local addresses are refused, redirects are not followed, responses are size-capped, one request per action. DNS rebinding between the check and the connection is not fully excluded.

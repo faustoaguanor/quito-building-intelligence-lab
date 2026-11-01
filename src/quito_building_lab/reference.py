@@ -64,11 +64,17 @@ def load_reference(
         rep.warnings.append(f"id field '{id_field}' not found; sequential ids are used.")
         id_field = None
 
-    geoms, attrs, seen = [], [], set()
     attr_cols = [c for c in gdf.columns if c != gdf.geometry.name]
-    for idx, g in enumerate(gdf.geometry):
-        row = {c: gdf[c].iloc[idx] for c in attr_cols}
-        if g is None or not hasattr(g, 'is_empty'):
+    items = ((g, {c: gdf[c].iloc[i] for c in attr_cols}) for i, g in enumerate(gdf.geometry))
+    geoms, attrs = _ingest(items, rep, kind, id_field)
+    return FootprintSet(geoms, attrs, rep.source_crs, "reference"), rep
+
+
+def _ingest(items, rep: ReferenceReport, kind: str, id_field: str | None):
+    """Clean (geometry, properties) pairs: nulls, empties, non-polygons, invalid, duplicates."""
+    geoms, attrs, seen = [], [], set()
+    for idx, (g, row) in enumerate(items):
+        if g is None or not hasattr(g, "is_empty"):
             rep.null_geometries += 1
             continue
         if g.is_empty:
@@ -86,9 +92,46 @@ def load_reference(
                 continue
             seen.add(key)
             geoms.append(part)
-            ref_id = row[id_field] if id_field else idx
-            attrs.append({"ref_id": str(ref_id), "ref_kind": kind})
+            ref_id = row.get(id_field) if id_field else None
+            attrs.append({"ref_id": str(ref_id if ref_id is not None else idx), "ref_kind": kind})
     rep.output_polygons = len(geoms)
     if not geoms:
         rep.warnings.append("No usable polygons in reference dataset.")
-    return FootprintSet(geoms, attrs, rep.source_crs, "reference"), rep
+    return geoms, attrs
+
+
+def reference_from_geojson(
+    data: dict,
+    crs: str | None,
+    kind: str = "construction",
+    id_field: str | None = None,
+    source: str = "geojson",
+) -> tuple[FootprintSet, ReferenceReport]:
+    """Build a reference set from an in-memory GeoJSON dict (no geopandas needed).
+
+    ``crs`` is the CRS the coordinates are expressed in. It is mandatory (never guessed).
+    """
+    from shapely.geometry import shape
+
+    if kind not in REFERENCE_KINDS:
+        raise ValueError(f"kind must be one of {REFERENCE_KINDS}")
+    if not crs:
+        raise CRSError("The CRS of the GeoJSON coordinates must be given explicitly.")
+    to_crs(crs)  # validates
+    feats = data.get("features", [])
+    rep = ReferenceReport(source=source, layer=None, kind=kind, input_features=len(feats), source_crs=crs)
+    if id_field and feats and id_field not in (feats[0].get("properties") or {}):
+        rep.warnings.append(f"id field '{id_field}' not found; sequential ids are used.")
+        id_field = None
+
+    def items():
+        for f in feats:
+            geom = f.get("geometry")
+            try:
+                g = shape(geom) if geom else None
+            except (ValueError, TypeError, AttributeError):
+                g = None
+            yield g, (f.get("properties") or {})
+
+    geoms, attrs = _ingest(items(), rep, kind, id_field)
+    return FootprintSet(geoms, attrs, crs, "reference"), rep

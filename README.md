@@ -22,6 +22,7 @@ One reusable Python engine, three delivery targets:
 - Real inference on PyTorch and ONNX Runtime (max probability difference 3.2e-8, mask agreement 100 %).
 - Windowed raster reading, resampling to a target GSD, overlap blending, NoData handling, bounded-memory vectorisation.
 - Cadastral import (GeoJSON/GeoPackage), many-to-many matching, IoU/coverage/area differences, ISO 19157-organised report.
+- WMS/WFS area picker (Streamlit map + CLI) — tested only against a simulated service; the real Quito services are unverified.
 - Exports: GeoJSON (RFC 7946, WGS 84), GeoPackage (metric CRS), GeoTIFF masks, JSON/Markdown reports.
 - 50 deterministic tests (`pytest`), ruff lint, CI and Pages workflows.
 
@@ -48,6 +49,16 @@ qbl info /data/ortho.tif                         # validate CRS, bands, GSD
 qbl run /data/ortho.tif --out outputs/run1 \
     --config configs/quito_drone_7cm.yaml --device auto \
     --reference /data/construcciones.gpkg --reference-layer construcciones --reference-kind construction
+```
+
+Fetch a small area from a WMS (and optionally WFS polygons) and process it (URLs and layer names are yours to verify):
+
+```bash
+qbl wms-layers https://<server>/geoserver/<workspace>/wms --limit 50
+qbl fetch-area --wms-url https://<server>/geoserver/<workspace>/wms --layer <layer> \
+    --bbox -78.5002 -0.1802 -78.4992 -0.1792 --out outputs/area1 \
+    --wfs-url https://<server>/geoserver/<workspace>/wfs --wfs-type <workspace:layer>
+qbl run outputs/area1/wms_area.tif --out outputs/area1/run --reference outputs/area1/reference.geojson --reference-kind uc
 ```
 
 Run the demo UI locally: `streamlit run app/streamlit_app.py`.
