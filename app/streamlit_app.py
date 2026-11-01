@@ -6,6 +6,7 @@ Uses the same core as the CLI (`quito_building_lab.pipeline.run_image`) with the
 # ruff: noqa: E402
 from __future__ import annotations
 
+import copy
 import io
 import json
 import math
@@ -193,6 +194,16 @@ def _to_pixels(geoms, src_crs, img: ogc.GeoImage):
     return out
 
 
+def _default_center(extent):
+    """Centre of a small coverage (<= 3 km); ``None`` for large ones, where the user must zoom in and click."""
+    if not extent:
+        return None
+    w, s_, e, n = extent
+    lat = (s_ + n) / 2
+    size_m = max((e - w) * 111_320.0 * math.cos(math.radians(lat)), (n - s_) * 110_574.0)
+    return (lat, (w + e) / 2) if size_m <= 3000 else None
+
+
 def _set_center(lat: float, lon: float) -> None:
     st.session_state["center"] = (float(lat), float(lon))
 
@@ -213,7 +224,6 @@ def tab_map():
         try:
             st.session_state["wms_caps"] = cached_wms_caps(wms_url)
             st.session_state["wms_caps_url"] = wms_url
-            st.session_state.pop("fit_for", None)
         except ogc.OGCError as exc:
             st.session_state.pop("wms_caps", None)
             st.error(f"No se pudo leer el servicio: {exc}")
@@ -235,40 +245,51 @@ def tab_map():
                 layer = ogc.WmsLayer(mname.strip(), mname.strip(), [mcrs])
                 caps = ogc.WmsCapabilities(wms_url, mver, "(manual)", ["image/png"], [layer])
 
-    st.subheader("2. Elija el centro y el tamaño del área")
+    st.subheader("2. Elija dónde descargar")
+    st.markdown("**① Elija la capa** (el mapa se centra en su cobertura)  ·  **② Haga clic en el mapa** donde quiere el "
+                "centro del cuadrado rojo  ·  **③ Ajuste el tamaño** con el deslizador. Puede volver a hacer clic para moverlo.")
     side = st.slider("Tamaño del cuadrado (metros de lado)", MIN_SIDE_M, MAX_SIDE_M, DEFAULT_SIDE_M, 10.0,
                      help=f"Entre {MIN_SIDE_M:.0f} y {MAX_SIDE_M:.0f} m. Más pequeño pierde contexto; más grande "
                           "obliga a bajar la resolución de la imagen que recibe el modelo.")
     px = min(512, math.ceil(side / 0.3))
-    st.caption(f"Imagen solicitada ≈ {px}×{px} px, resolución de la petición ≈ {side / px:.2f} m/píxel "
-               "(el modelo se entrenó con ~0,5 m).")
-    center = st.session_state.get("center")
-    view = st.session_state.get("map_view") or DEFAULT_VIEW
-    m = folium.Map(location=view[:2], zoom_start=view[2], control_scale=True)
+    st.caption(f"Cuadrado de {side:.0f} × {side:.0f} m ({side * side / 10_000:.1f} ha) → imagen ≈ {px}×{px} px, "
+               f"≈ {side / px:.2f} m/píxel (el modelo se entrenó con ~0,5 m).")
     extent = layer.bbox_lonlat if layer is not None else None
-    if extent:
-        w, s_, e, n = extent
-        folium.Rectangle([[s_, w], [n, e]], color="#1f77ff", weight=2, fill=False, dash_array="6",
-                         tooltip="Cobertura declarada de la capa").add_to(m)
-        if st.session_state.get("fit_for") != (wms_url, layer.name):
-            m.fit_bounds([[s_, w], [n, e]])
-            st.session_state["fit_for"] = (wms_url, layer.name)
-    if layer is not None and caps is not None:
-        try:
-            folium.raster_layers.WmsTileLayer(url=wms_url, layers=layer.name, fmt="image/png", transparent=True,
-                                              version=caps.version, name="Capa WMS", overlay=True).add_to(m)
-        except Exception:  # noqa: BLE001 - overlay is a convenience only
-            pass
+
+    # The base map is built ONCE per (service, layer) and kept in session state. The selected square is
+    # added client-side as a feature group and only clicks are reported back, so panning/zooming never
+    # reruns the app or rebuilds the map (that caused the flicker and the vanishing layers).
+    map_key = (wms_url, layer.name if layer is not None else None, caps.version if caps else None)
+    if st.session_state.get("map_key") != map_key:
+        base = folium.Map(location=DEFAULT_VIEW[:2], zoom_start=DEFAULT_VIEW[2], control_scale=True)
+        if extent:
+            w, s_, e, n = extent
+            folium.Rectangle([[s_, w], [n, e]], color="#1f77ff", weight=2, fill=False, dash_array="6",
+                             interactive=False).add_to(base)  # not interactive: clicks must reach the map
+            base.fit_bounds([[s_, w], [n, e]])
+        if layer is not None and caps is not None:
+            try:
+                folium.raster_layers.WmsTileLayer(url=wms_url, layers=layer.name, fmt="image/png", transparent=True,
+                                                  version=caps.version, name="Capa WMS", overlay=True).add_to(base)
+            except Exception:  # noqa: BLE001 - overlay is a convenience only
+                pass
+        st.session_state.update(map_key=map_key, base_map=base, map_ver=st.session_state.get("map_ver", 0) + 1,
+                                click_seen=None)
+        # small coverages (e.g. one drone flight): preselect its centre so a square is visible straight away
+        st.session_state["center"] = _default_center(extent)
+    center = st.session_state.get("center")
     bbox = None
+    group = folium.FeatureGroup(name="Área seleccionada")
     if center:
         bbox = _bbox_from_center(center[1], center[0], side)
         folium.Rectangle([[bbox[1], bbox[0]], [bbox[3], bbox[2]]], color="#e63946", weight=3, fill=True,
-                         fill_opacity=0.15, tooltip=f"Área: {side:.0f} m de lado").add_to(m)
-    folium.LayerControl().add_to(m)
-    mp = st_folium(m, height=460, use_container_width=True, returned_objects=["last_clicked", "center", "zoom"],
-                   key="qmap") or {}
-    if mp.get("center") and mp.get("zoom") is not None:
-        st.session_state["map_view"] = (mp["center"]["lat"], mp["center"]["lng"], mp["zoom"])
+                         fill_opacity=0.2, interactive=False).add_to(group)
+        folium.CircleMarker(center, radius=4, color="#e63946", fill=True, fill_opacity=1,
+                            interactive=False).add_to(group)
+    # st_folium mutates the map it receives, so pass a copy (same ids => identical HTML => no re-render)
+    mp = st_folium(copy.deepcopy(st.session_state["base_map"]), feature_group_to_add=group,
+                   layer_control=folium.LayerControl(), height=460, use_container_width=True,
+                   returned_objects=["last_clicked"], key=f"qmap_{st.session_state['map_ver']}") or {}
     click = mp.get("last_clicked")
     if click and click != st.session_state.get("click_seen"):
         st.session_state["click_seen"] = click
@@ -284,7 +305,7 @@ def tab_map():
 
     problem = None
     if not center:
-        st.info("👆 Haga clic en el mapa para colocar el centro del cuadrado.")
+        st.info("👆 Acerque el mapa a la zona que le interesa y haga clic para colocar el cuadrado rojo.")
         problem = "sin centro"
     elif layer is None:
         st.info("Elija una capa para continuar.")
