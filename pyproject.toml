@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quito-building-lab"
+version = "0.1.0"
+description = "AI-assisted building footprint extraction and cadastral quality assessment (Quito, Ecuador)"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "faustoaguanor" }]
+requires-python = ">=3.10"
+keywords = ["gis", "remote-sensing", "segmentation", "buildings", "cadastre", "quality", "ISO 19157"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Scientific/Engineering :: GIS",
+  "Topic :: Scientific/Engineering :: Image Recognition",
+]
+dependencies = [
+  "numpy>=1.24",
+  "rasterio>=1.3",
+  "shapely>=2.0",
+  "pyproj>=3.5",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# Vector reference import / GeoPackage export / cadastral comparison
+gis = ["geopandas>=0.14", "pyogrio>=0.7"]
+# PyTorch backend (install the CPU or CUDA wheel that matches your system first, see docs/INSTALL.md)
+torch = ["torch>=2.1", "safetensors>=0.4"]
+# Lightweight ONNX Runtime backend
+onnx = ["onnxruntime>=1.16"]
+# ONNX export (requires torch)
+export = ["onnx>=1.15", "onnxscript>=0.1"]
+app = ["streamlit>=1.30", "pillow>=10"]
+dev = ["pytest>=7.4", "ruff>=0.4", "pillow>=10"]
+
+[project.scripts]
+qbl = "quito_building_lab.cli:main"
+
+[project.urls]
+Homepage = "https://faustoaguanor.github.io/quito-building-intelligence-lab/"
+Repository = "https://github.com/faustoaguanor/quito-building-intelligence-lab"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+quito_building_lab = ["*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["model: requires downloaded model weights (optional smoke test)"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]

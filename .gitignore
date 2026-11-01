@@ -1,0 +1,51 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+# Node
+node_modules/
+# Secrets / local config
+.env
+.env.*
+*.pem
+secrets.toml
+.streamlit/secrets.toml
+# Data & models (never commit large rasters, weights or outputs)
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.onnx
+*.h5
+*.tar.gz
+data/
+downloads/
+outputs/
+runs/
+tiles_tmp/
+*.dat
+*.part
+models/weights/
+/*.tif
+/*.tiff
+*.ecw
+*.jp2
+# Keep small demo assets
+!examples/demo/*.tif
+!examples/demo/*.png
+# IDE / OS
+.idea/
+.vscode/
+.claude/
+.DS_Store
+Thumbs.db
+*.log
