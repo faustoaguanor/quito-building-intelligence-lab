@@ -34,7 +34,7 @@ torch = ["torch>=2.1", "safetensors>=0.4"]
 onnx = ["onnxruntime>=1.16"]
 # ONNX export (requires torch)
 export = ["onnx>=1.15", "onnxscript>=0.1"]
-app = ["streamlit>=1.30", "pillow>=10"]
+app = ["streamlit>=1.30", "pillow>=10", "folium>=0.15", "streamlit-folium>=0.20"]
 dev = ["pytest>=7.4", "ruff>=0.4", "pillow>=10"]
 
 [project.scripts]
