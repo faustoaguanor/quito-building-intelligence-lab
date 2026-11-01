@@ -204,6 +204,17 @@ def _default_center(extent):
     return (lat, (w + e) / 2) if size_m <= 3000 else None
 
 
+def _prob_overlay(rgb: np.ndarray, prob: np.ndarray) -> Image.Image:
+    """Heat-map of the model probability blended over the image (nearest resize if the grids differ)."""
+    h, w = rgb.shape[:2]
+    p = Image.fromarray((np.clip(prob, 0, 1) * 255).astype(np.uint8))
+    if p.size != (w, h):
+        p = p.resize((w, h), Image.NEAREST)
+    a = np.asarray(p).astype(np.float32) / 255.0
+    heat = np.stack([a * 255, a * 120, (1 - a) * 80], axis=-1)
+    return Image.fromarray((rgb * (1 - 0.55 * a[..., None]) + heat * 0.55 * a[..., None]).clip(0, 255).astype(np.uint8))
+
+
 def _set_center(lat: float, lon: float) -> None:
     st.session_state["center"] = (float(lat), float(lon))
 
@@ -251,7 +262,17 @@ def tab_map():
     side = st.slider("Tamaño del cuadrado (metros de lado)", MIN_SIDE_M, MAX_SIDE_M, DEFAULT_SIDE_M, 10.0,
                      help=f"Entre {MIN_SIDE_M:.0f} y {MAX_SIDE_M:.0f} m. Más pequeño pierde contexto; más grande "
                           "obliga a bajar la resolución de la imagen que recibe el modelo.")
-    px = min(512, math.ceil(side / 0.3))
+    with st.expander("Ajustes avanzados (para probar en otras zonas, p. ej. la costa)"):
+        st.caption("Si el modelo no detecta bien en una zona, pruebe aquí: bajar el umbral, cambiar la resolución de la "
+                   "petición o ver el mapa de probabilidad para saber si el modelo ve algo.")
+        adv_thr = st.slider("Umbral de probabilidad", 0.20, 0.90, 0.50, 0.05, key="adv_thr",
+                            help="Más bajo detecta más (y más falsos positivos); más alto es más estricto.")
+        adv_min_area = st.slider("Área mínima de cada huella (m²)", 4.0, 100.0, 8.0, 2.0, key="adv_min_area")
+        adv_gsd = st.slider("Resolución pedida al servicio (m/píxel)", 0.20, 0.60, 0.30, 0.05, key="adv_gsd",
+                            help="El modelo se entrenó con ~0,5 m/píxel. Con un cuadrado grande la imagen se limita a "
+                                 "512 px, así que la resolución real puede ser más gruesa que la pedida.")
+        adv_prob = st.checkbox("Mostrar el mapa de probabilidad del modelo", value=True, key="adv_prob")
+    px = min(512, math.ceil(side / adv_gsd))
     st.caption(f"Cuadrado de {side:.0f} × {side:.0f} m ({side * side / 10_000:.1f} ha) → imagen ≈ {px}×{px} px, "
                f"≈ {side / px:.2f} m/píxel (el modelo se entrenó con ~0,5 m).")
     extent = layer.bbox_lonlat if layer is not None else None
@@ -330,7 +351,7 @@ def tab_map():
                 return
             try:
                 with st.spinner("Pidiendo la imagen al WMS (una sola petición)…"):
-                    img = ogc.wms_get_map(wms_url, layer.name, bbox, layer.crs, caps.version, 0.3)
+                    img = ogc.wms_get_map(wms_url, layer.name, bbox, layer.crs, caps.version, adv_gsd)
             except (ogc.OGCError, ValueError) as exc:
                 st.error(f"No se pudo obtener la imagen: {exc}")
                 return
@@ -343,6 +364,7 @@ def tab_map():
                 return
             cfg = PipelineConfig()
             cfg.tiling.tile_size, cfg.tiling.overlap = 512, 0
+            cfg.postprocess.threshold, cfg.postprocess.min_area_m2 = adv_thr, adv_min_area
             with tempfile.TemporaryDirectory() as tmp:
                 tif = ogc.write_geotiff(img, str(Path(tmp) / "wms_area.tif"))
                 with st.spinner("Ejecutando el modelo en CPU…"):
@@ -352,10 +374,23 @@ def tab_map():
             draw = ImageDraw.Draw(base)
             for g in _to_pixels(out.candidates.geoms, out.candidates.crs, img):
                 draw.line(list(g.exterior.coords), fill=(255, 235, 0), width=2)
-            a1, a2 = st.columns(2)
-            a1.image(img.array, caption=f"Imagen WMS descargada ({img.array.shape[1]}×{img.array.shape[0]} px, "
-                                        f"≈ {img.meta['approx_gsd_m']} m/píxel)")
-            a2.image(base, caption="Huellas candidatas")
+            prob = np.asarray(out.segmentation.probability)
+            cols = st.columns(3 if adv_prob else 2)
+            cols[0].image(img.array, caption=f"Imagen WMS descargada ({img.array.shape[1]}×{img.array.shape[0]} px, "
+                                             f"≈ {img.meta['approx_gsd_m']} m/píxel)")
+            cols[1].image(base, caption="Huellas candidatas")
+            if adv_prob:
+                cols[2].image(_prob_overlay(img.array, prob), caption="Probabilidad del modelo (más claro = más probable)")
+            pmax, share = float(prob.max()), float((prob >= adv_thr).mean()) * 100
+            st.caption(f"Probabilidad máxima del modelo: {pmax:.2f} · píxeles por encima del umbral ({adv_thr:.2f}): {share:.1f} %")
+            if len(out.candidates) == 0:
+                if pmax < adv_thr:
+                    st.warning("El modelo no ve edificios con esta configuración (su probabilidad máxima no llega al "
+                               "umbral). Pruebe bajar el umbral o cambiar la resolución; si sigue igual, la zona es "
+                               "demasiado distinta de los datos de entrenamiento.")
+                else:
+                    st.warning("Hay probabilidad por encima del umbral pero las huellas son más pequeñas que el área "
+                               "mínima. Pruebe bajar el área mínima.")
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Candidatos", len(out.candidates))
             k2.metric("Área total (m²)", f"{out.candidates.total_area:,.0f}")
