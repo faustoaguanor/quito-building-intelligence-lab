@@ -53,6 +53,12 @@ def estimate_gsd_m(crs, transform: Affine, width: int, height: int) -> float | N
         mx = rx * 111_320.0 * math.cos(math.radians(lat))
         my = ry * 110_574.0
         return float((mx + my) / 2.0)
+    from .crs_utils import is_web_mercator
+
+    if is_web_mercator(crs):  # true ground size = Mercator unit * cos(latitude)
+        y = transform.f + transform.e * height / 2.0
+        lat = math.atan(math.sinh(y / 6_378_137.0))
+        return float((rx + ry) / 2.0 * math.cos(lat))
     try:
         factor = crs.linear_units_factor[1]
     except Exception:  # pragma: no cover - unusual CRS definitions

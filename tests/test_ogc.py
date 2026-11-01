@@ -24,6 +24,7 @@ WMS_CAPS = b"""<?xml version="1.0"?>
  <Capability><Request><GetMap><Format>image/png</Format><Format>image/jpeg</Format></GetMap></Request>
   <Layer><Title>root</Title><CRS>EPSG:4326</CRS><CRS>EPSG:3857</CRS>
    <Layer><Name>ortho</Name><Title>Orthophoto</Title><CRS>EPSG:32717</CRS>
+    <MinScaleDenominator>1000</MinScaleDenominator><MaxScaleDenominator>200000</MaxScaleDenominator>
     <EX_GeographicBoundingBox><westBoundLongitude>-78.6</westBoundLongitude><eastBoundLongitude>-78.4</eastBoundLongitude>
     <southBoundLatitude>-0.3</southBoundLatitude><northBoundLatitude>-0.1</northBoundLatitude></EX_GeographicBoundingBox></Layer>
    <Layer><Name>only4326</Name><Title>Only 4326</Title></Layer>
@@ -72,6 +73,9 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(WMS_CAPS, "text/xml")
             elif q.get("layers") == "missing":
                 self.reply(EXC, "text/xml")
+            elif q.get("layers") == "alwaysfail" or (q.get("layers") == "flaky" and q.get("crs") == "EPSG:3857"):
+                self.reply(b'<?xml version="1.0"?><ServiceExceptionReport><ServiceException>'
+                           b'java.lang.NullPointerException</ServiceException></ServiceExceptionReport>', "text/xml")
             elif q.get("layers") == "blank":
                 buf = io.BytesIO()
                 Image.new("RGBA", (int(q["width"]), int(q["height"])), (0, 0, 0, 0)).save(buf, "PNG")
@@ -132,7 +136,12 @@ def test_wms_capabilities_parsing(server):
     assert set(names) == {"ortho", "only4326"}
     assert set(names["ortho"].crs) == {"EPSG:4326", "EPSG:3857", "EPSG:32717"}  # inherited + own
     assert names["ortho"].bbox_lonlat == (-78.6, -0.3, -78.4, -0.1)
-    assert ogc.choose_crs(names["ortho"].crs) == "EPSG:32717"
+    assert (names["ortho"].min_scale, names["ortho"].max_scale) == (1000.0, 200000.0)
+    zmin, zmax = names["ortho"].zoom_range()
+    # web-map zoom 19 is about 1:1066 and every zoom level halves the scale denominator
+    assert zmin == pytest.approx(11.45, abs=0.05) and zmax == pytest.approx(19.09, abs=0.05)
+    assert names["only4326"].min_scale is None and names["only4326"].zoom_range() == (None, None)
+    assert ogc.choose_crs(names["ortho"].crs) == "EPSG:3857"  # Web Mercator is the preferred request CRS
 
 
 def test_get_map_is_georeferenced_and_requests_a_small_image(server, tmp_path):
@@ -220,7 +229,7 @@ def test_cli_fetch_area_then_run(server, tmp_path, monkeypatch, capsys):
     assert prov["wms"]["layer"] == "ortho" and prov["wfs"]["returned"] == 2
     import geopandas as gpd
 
-    assert gpd.read_file(tmp_path / "a" / "reference.geojson").crs.to_epsg() == 32717
+    assert gpd.read_file(tmp_path / "a" / "reference.geojson").crs.to_string() == prov["wms"]["request_crs"]
     assert cli.main(["fetch-area", "--wms-url", server + "/wms", "--layer", "nope", "--bbox",
                      *map(str, QUITO_BBOX), "--out", str(tmp_path / "b")]) == 2
 
@@ -239,3 +248,73 @@ def test_bbox_intersects():
     assert ogc.bbox_intersects(QUITO_BBOX, layer)
     assert not ogc.bbox_intersects((-80.0, -2.0, -79.9, -1.9), layer)
     assert ogc.bbox_intersects((-78.41, -0.2, -78.3, -0.1), layer)  # partial overlap counts
+
+
+def test_crs_chain_prefers_web_mercator_then_others():
+    assert ogc.choose_crs_chain(["EPSG:4326", "EPSG:32717", "EPSG:3857"]) == ["EPSG:3857", "EPSG:32717", "EPSG:4326"]
+    assert ogc.choose_crs_chain(["EPSG:4326"]) == ["EPSG:4326"]
+    assert ogc.choose_crs_chain([]) == ["EPSG:3857", "EPSG:4326"]
+    assert len(ogc.choose_crs_chain(["EPSG:3857", "EPSG:32717", "EPSG:4326", "CRS:84"])) == 3
+    with pytest.raises(ogc.OGCError):
+        ogc.choose_crs_chain(["EPSG:2154"])
+
+
+def test_get_map_falls_back_to_next_crs_when_the_service_fails(server):
+    SEEN.clear()
+    img = ogc.wms_get_map(server + "/wms", "flaky", QUITO_BBOX, ["EPSG:3857", "EPSG:32717"], policy=POL_BIG)
+    assert img.crs == "EPSG:32717"
+    assert [a["crs"] for a in img.meta["attempts"]] == ["EPSG:3857", "EPSG:32717"]
+    assert img.meta["attempts"][0]["ok"] is False and "NullPointerException" in img.meta["attempts"][0]["error"]
+    assert [r["crs"] for r in SEEN if r.get("layers") == "flaky"] == ["EPSG:3857", "EPSG:32717"]  # exactly 2 requests
+
+
+def test_get_map_reports_every_attempt_when_all_fail(server):
+    SEEN.clear()
+    with pytest.raises(ogc.OGCServiceError) as exc:
+        ogc.wms_get_map(server + "/wms", "alwaysfail", QUITO_BBOX, ["EPSG:3857", "EPSG:32717", "EPSG:4326"], policy=POL_BIG)
+    assert "NullPointerException" in str(exc.value)
+    assert [a["crs"] for a in exc.value.attempts] == ["EPSG:3857", "EPSG:32717", "EPSG:4326"]
+    assert all("alwaysfail" in a["url"] for a in exc.value.attempts)
+    assert len([r for r in SEEN if r.get("layers") == "alwaysfail"]) == 3  # bounded: never more than 3 requests
+
+
+def test_unsafe_url_is_not_retried_with_other_crs():
+    with pytest.raises(ogc.OGCError) as exc:
+        ogc.wms_get_map("https://127.0.0.1/wms", "x", QUITO_BBOX, ["EPSG:3857", "EPSG:32717"])
+    assert not isinstance(exc.value, ogc.OGCServiceError)
+
+
+def test_web_mercator_image_is_georeferenced_and_measured_in_true_metres(server, tmp_path):
+    from quito_building_lab.crs_utils import is_metric, metric_crs_for
+    from quito_building_lab.raster_io import inspect_raster
+
+    img = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:3857"], policy=POL_BIG)
+    assert img.crs == "EPSG:3857"
+    info = inspect_raster(ogc.write_geotiff(img, str(tmp_path / "m.tif")))
+    assert info.gsd_m == pytest.approx(img.meta["approx_gsd_m"], rel=0.02)
+    assert not is_metric(__import__("pyproj").CRS.from_epsg(3857))
+    assert metric_crs_for("EPSG:3857", (-8_700_000, -20_000, -8_699_900, -19_900)).to_epsg() == 32717
+    # at 60 degrees north a Mercator "metre" is twice as long as a ground metre
+    from pyproj import CRS
+    from rasterio.transform import from_origin
+
+    from quito_building_lab.raster_io import estimate_gsd_m
+
+    y60 = 8_399_737.9
+    assert estimate_gsd_m(CRS.from_epsg(3857), from_origin(0, y60, 1.0, 1.0), 10, 10) == pytest.approx(0.5, abs=0.01)
+
+
+def test_web_mercator_image_gives_true_metre_areas_through_the_pipeline(server, tmp_path):
+    # roof = 60x60 px of the stub image; its true area must be (60 * gsd)^2 whatever CRS was requested
+    bbox = (-78.5002, -0.001, -78.4992, 0.0)  # just south of the equator (UTM 17S)
+    for crs in ("EPSG:3857", "EPSG:32717"):
+        img = ogc.wms_get_map(server + "/wms", "ortho", bbox, [crs], policy=POL_BIG)
+        tif = ogc.write_geotiff(img, str(tmp_path / f"{crs.replace(':', '_')}.tif"))
+        cfg = PipelineConfig()
+        cfg.tiling.target_gsd = None
+        cfg.inference.normalization = "image_stats"
+        cfg.postprocess.min_area_m2, cfg.postprocess.sieve_pixels, cfg.postprocess.simplify_tolerance = 2.0, 4, 0
+        out = run_raster(tif, None, cfg, predictor=ThresholdPredictor())
+        assert len(out.candidates) == 1 and out.candidates.crs == "EPSG:32717"
+        expected = (60 * img.meta["approx_gsd_m"]) ** 2
+        assert out.candidates.geoms[0].area == pytest.approx(expected, rel=0.08), crs
