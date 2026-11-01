@@ -10,6 +10,12 @@
 <nav><a href="#contexto">Contexto</a><a href="#flujo">Flujo</a><a href="#arquitectura">Arquitectura</a><a href="#modelo">Modelo</a><a href="#resultados">Resultados</a><a href="#calidad">Calidad</a><a href="#limites">Límites</a><a href="#instalar">Instalación</a></nav>
 <a class="btn p" href="https://github.com/faustoaguanor/quito-building-intelligence-lab">Repositorio en GitHub</a>
 <a class="btn" id="demo-link" href="https://github.com/faustoaguanor/quito-building-intelligence-lab/blob/main/docs/DEPLOYMENT.md">Demo Streamlit: instrucciones de despliegue</a>
+<div class="stats">
+<div><span class="stat">29,3 M</span><span class="mut">parámetros del modelo</span></div>
+<div><span class="stat">1,4 s</span><span class="mut">por tesela 512² (ONNX, CPU)</span></div>
+<div><span class="stat">50</span><span class="mut">pruebas automáticas</span></div>
+<div><span class="stat">3</span><span class="mut">destinos, un solo motor</span></div>
+</div>
 <p class="mut">Estado honesto: la demo pública de Streamlit y el modelo en Hugging Face <b>aún no están publicados</b>; este sitio no ejecuta inferencia (es estático). Los resultados mostrados fueron generados por el código del repositorio.</p>
 </div></header>
 
@@ -27,15 +33,17 @@
 </div></div></section>
 
 <section id="arquitectura"><div class="wrap"><h2>Arquitectura: un motor, tres destinos</h2>
-<svg viewBox="0 0 900 250" width="100%" role="img" aria-label="Diagrama de arquitectura">
-<rect x="20" y="95" width="200" height="60" rx="8"/><text x="120" y="130" text-anchor="middle">Núcleo Python (quito_building_lab)</text>
-<rect x="340" y="20" width="220" height="56" rx="8"/><text x="450" y="52" text-anchor="middle">CLI / app local (GeoTIFF grandes)</text>
-<rect x="340" y="100" width="220" height="56" rx="8"/><text x="450" y="132" text-anchor="middle">Streamlit (1 imagen, CPU)</text>
-<rect x="340" y="180" width="220" height="56" rx="8"/><text x="450" y="212" text-anchor="middle">GitHub Pages (portafolio estático)</text>
-<rect x="680" y="95" width="200" height="60" rx="8"/><text x="780" y="130" text-anchor="middle">Pesos: origen confiable + SHA-256</text>
-<path d="M220 125 L340 48"/><path d="M220 125 L340 128"/><path d="M220 125 L340 208" stroke-dasharray="5 4"/><path d="M680 125 L560 128"/>
-</svg>
-<p class="mut">Las rutas con línea punteada no ejecutan Python: Pages solo muestra resultados precomputados.</p></div></section>
+<div class="arch" role="img" aria-label="Diagrama: el núcleo Python alimenta la CLI local, la demo Streamlit y el portafolio estático">
+<div class="arch-src"><b>Pesos del modelo</b><span>Fuente original + SHA-256</span></div>
+<div class="arch-arrow" aria-hidden="true">→</div>
+<div class="arch-core"><b>Núcleo Python</b><span>quito_building_lab<br>raster · inferencia · vectorización · comparación</span></div>
+<div class="arch-arrow" aria-hidden="true">→</div>
+<div class="arch-out">
+<div class="node"><b>CLI / app local</b><span>GeoTIFF grandes · CPU o CUDA</span></div>
+<div class="node"><b>Streamlit</b><span>1 imagen ≤ 512×512 · CPU</span></div>
+<div class="node dashed"><b>GitHub Pages</b><span>Resultados precomputados · no ejecuta Python</span></div>
+</div></div>
+<p class="mut">El borde punteado indica que GitHub Pages no ejecuta Python: solo muestra resultados generados antes por el motor.</p></div></section>
 
 <section id="modelo"><div class="wrap"><h2>Segmentación preentrenada</h2>
 <p><b>XD_XD · SpaceNet-4 · U-Net con encoder VGG16</b> (29,3 M de parámetros, 117 MB). Modelo real de segmentación de edificios en RGB, entrenado con imágenes WorldView-2 (~0,5 m) de Atlanta. Se descarga desde la fuente original (AWS Open Data) con verificación SHA-256; no se afirma autoría ni propiedad. Se validó la exportación a ONNX: diferencia máxima de probabilidad 3,2·10⁻⁸ y 100 % de concordancia de máscara; 1,4 s por tesela de 512² con ONNX frente a 2,2 s con PyTorch (4 núcleos).</p>
