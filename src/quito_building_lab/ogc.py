@@ -31,6 +31,7 @@ USER_AGENT = "quito-building-lab/0.1 (+https://github.com/faustoaguanor/quito-bu
 
 # Example service supplied by a user (not verified by the maintainers). Any WMS URL can be used instead.
 EXAMPLE_WMS = {
+    "IGM Ecuador · ortofotos 2022 (por defecto)": "https://www.geoportaligm.gob.ec/orto/toma2022/wms",
     "IGM Ecuador · ortofotos UAV (ejemplo)": "https://www.geoportaligm.gob.ec/orto/uav_igm/wms",
 }
 PREFERRED_CRS = ("EPSG:32717", "EPSG:3857", "EPSG:4326", "CRS:84")
