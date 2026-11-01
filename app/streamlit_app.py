@@ -17,7 +17,6 @@ from pathlib import Path
 import folium
 import numpy as np
 import streamlit as st
-from folium.plugins import Draw
 from PIL import Image, ImageDraw
 from shapely.affinity import affine_transform
 from streamlit_folium import st_folium
@@ -27,10 +26,8 @@ from quito_building_lab.config import PipelineConfig
 from quito_building_lab.crs_utils import reproject_geom
 from quito_building_lab.export import to_geojson_dict
 from quito_building_lab.inference import cached_predictor
-from quito_building_lab.matching import LABELS_ES
 from quito_building_lab.models import ModelWeightsError, ensure_onnx, get_spec
 from quito_building_lab.pipeline import run_image, run_raster
-from quito_building_lab.reference import reference_from_geojson
 
 MAX_BYTES = 5 * 1024 * 1024
 MAX_SIDE = 512
@@ -165,37 +162,14 @@ def cached_wms_caps(url: str):
     return ogc.wms_capabilities(url)
 
 
-@st.cache_data(ttl=600, show_spinner=False)
-def cached_wfs_caps(url: str):
-    return ogc.wfs_capabilities(url)
-
-
-MAX_SIDE_M = 260.0
-CLASS_COLORS = {
-    "strong_correspondence": (46, 204, 113), "partial_correspondence": (241, 196, 15),
-    "ambiguous_match": (230, 126, 34), "candidate_without_reference": (231, 76, 60),
-    "not_evaluated": (160, 160, 160),
-}
-
-
-def _bbox_from_drawing(draw) -> tuple[float, float, float, float] | None:
-    try:
-        ring = draw["geometry"]["coordinates"][0]
-        xs, ys = [c[0] for c in ring], [c[1] for c in ring]
-        return min(xs), min(ys), max(xs), max(ys)
-    except (KeyError, TypeError, IndexError):
-        return None
+MIN_SIDE_M, MAX_SIDE_M, DEFAULT_SIDE_M = 80.0, 260.0, 150.0
+DEFAULT_VIEW = (-1.4, -78.4, 6)  # Ecuador; the map zooms to the layer extent once a layer is chosen
 
 
 def _bbox_from_center(lon: float, lat: float, side_m: float):
     dlat = side_m / 2 / 110_574.0
     dlon = side_m / 2 / (111_320.0 * math.cos(math.radians(lat)))
     return lon - dlon, lat - dlat, lon + dlon, lat + dlat
-
-
-def _side_m(b) -> float:
-    lat = (b[1] + b[3]) / 2
-    return max((b[2] - b[0]) * 111_320.0 * math.cos(math.radians(lat)), (b[3] - b[1]) * 110_574.0)
 
 
 def _to_pixels(geoms, src_crs, img: ogc.GeoImage):
@@ -207,95 +181,111 @@ def _to_pixels(geoms, src_crs, img: ogc.GeoImage):
     return out
 
 
+def _set_center(lat: float, lon: float) -> None:
+    st.session_state["center"] = (float(lat), float(lon))
+
+
 def tab_map():
     st.markdown(
-        "Elija un servicio **WMS** (imagen), dibuje un cuadrado en el mapa, descargue **solo esa área** y ejecute la "
-        "inferencia sobre ella. Opcionalmente compare con polígonos de un **WFS** (UC / bloques) del mismo cuadrado.\n\n"
-        "⚠️ Los servicios de Quito listados son **candidatos sin verificar**: confirme con su titular los permisos y "
-        "condiciones de uso. Una imagen WMS es una vista renderizada, **no** los píxeles originales de la ortofoto ni "
-        "datos vectoriales catastrales; su resolución real puede ser menor que la del dron."
+        "Use **cualquier servicio WMS** con ortofotos: cargue sus capas, haga **clic en el mapa** para elegir el centro, "
+        "ajuste el tamaño del cuadrado, y la app descarga **solo esa área** y ejecuta la inferencia.\n\n"
+        "⚠️ Compruebe con el titular del servicio sus condiciones de uso. Una imagen WMS es una vista renderizada, **no** "
+        "los píxeles originales de la ortofoto; su resolución real puede ser menor. Las capas de vuelos de dron suelen "
+        "cubrir solo **zonas concretas**: la línea azul del mapa muestra la cobertura declarada por la capa."
     )
-    c1, c2 = st.columns(2)
-    with c1:
-        st.subheader("1. Servicio de imagen (WMS)")
-        preset = st.selectbox("Servicio", list(ogc.CANDIDATE_WMS) + ["Otra URL…"], key="wms_preset")
-        wms_url = st.text_input("URL del WMS (https)", ogc.CANDIDATE_WMS.get(preset, ""), key=f"wms_url_{preset}")
-        if st.button("Cargar capas del WMS"):
-            try:
-                st.session_state["wms_caps"] = cached_wms_caps(wms_url)
-                st.session_state["wms_caps_url"] = wms_url
-            except ogc.OGCError as exc:
-                st.session_state.pop("wms_caps", None)
-                st.error(f"No se pudo leer el servicio: {exc}")
-        caps = st.session_state.get("wms_caps") if st.session_state.get("wms_caps_url") == wms_url else None
-        layer = None
-        if caps:
-            q = st.text_input("Filtrar capas por texto", "", key="wms_filter").lower()
-            opts = [la for la in caps.layers if q in la.name.lower() or q in la.title.lower()][:300]
-            layer = st.selectbox("Capa", opts, format_func=lambda la: f"{la.title} — {la.name}") if opts else None
-            st.caption(f"{len(caps.layers)} capas; WMS {caps.version}.")
-        else:
-            with st.expander("¿No carga el listado? Escriba la capa a mano", expanded=False):
-                st.caption("Útil si el servidor no responde a la lista de capas pero sí a las imágenes. "
-                           "Si el servidor bloquea a Streamlit Cloud, ejecute la app en su computadora: "
-                           "`streamlit run app/streamlit_app.py`.")
-                mname = st.text_input("Nombre exacto de la capa (ej. usigc:ortofoto)", key="manual_layer")
-                mcrs = st.selectbox("CRS de la petición", list(ogc.PREFERRED_CRS), key="manual_crs")
-                mver = st.selectbox("Versión WMS", ["1.3.0", "1.1.1"], key="manual_ver")
-                if mname.strip():
-                    layer = ogc.WmsLayer(mname.strip(), mname.strip(), [mcrs])
-                    caps = ogc.WmsCapabilities(wms_url, mver, "(manual)", ["image/png"], [layer])
-    with c2:
-        st.subheader("2. Vectores para comparar (opcional)")
-        use_wfs = st.checkbox("Comparar con un WFS (UC / bloques / construcciones)")
-        wfs_url = wfs_type = None
-        kind = "uc"
-        if use_wfs:
-            wp = st.selectbox("Servicio WFS", list(ogc.CANDIDATE_WFS) + ["Otra URL…"], key="wfs_preset")
-            wfs_url = st.text_input("URL del WFS (https)", ogc.CANDIDATE_WFS.get(wp, ""), key=f"wfs_url_{wp}")
-            if st.button("Cargar tipos del WFS"):
-                try:
-                    st.session_state["wfs_caps"] = cached_wfs_caps(wfs_url)
-                    st.session_state["wfs_caps_url"] = wfs_url
-                except ogc.OGCError as exc:
-                    st.session_state.pop("wfs_caps", None)
-                    st.error(f"No se pudo leer el servicio: {exc}")
-            wcaps = st.session_state.get("wfs_caps") if st.session_state.get("wfs_caps_url") == wfs_url else None
-            if wcaps:
-                wq = st.text_input("Filtrar tipos", "", key="wfs_filter").lower()
-                wopts = [f for f in wcaps.feature_types if wq in f.name.lower() or wq in f.title.lower()][:300]
-                ft = st.selectbox("Tipo de entidad", wopts, format_func=lambda f: f"{f.title} — {f.name}") if wopts else None
-                wfs_type = ft.name if ft else None
-            kind = {"UC": "uc", "Bloque": "block", "Construcción": "construction", "Otro": "other"}[
-                st.radio("Qué representa la capa", ["UC", "Bloque", "Construcción", "Otro"], horizontal=True)]
+    st.subheader("1. Servicio WMS y capa")
+    preset = st.selectbox("Servicio", list(ogc.EXAMPLE_WMS) + ["Otra URL…"], key="wms_preset")
+    wms_url = st.text_input("URL del WMS (https)", ogc.EXAMPLE_WMS.get(preset, ""), key=f"wms_url_{preset}")
+    wms_url = wms_url.strip().rstrip("?&")
+    if st.button("Cargar capas del WMS"):
+        try:
+            st.session_state["wms_caps"] = cached_wms_caps(wms_url)
+            st.session_state["wms_caps_url"] = wms_url
+            st.session_state.pop("fit_for", None)
+        except ogc.OGCError as exc:
+            st.session_state.pop("wms_caps", None)
+            st.error(f"No se pudo leer el servicio: {exc}")
+    caps = st.session_state.get("wms_caps") if st.session_state.get("wms_caps_url") == wms_url else None
+    layer = None
+    if caps:
+        q = st.text_input("Filtrar capas por texto", "", key="wms_filter").lower()
+        opts = [la for la in caps.layers if q in la.name.lower() or q in la.title.lower()][:300]
+        layer = st.selectbox("Capa", opts, format_func=lambda la: f"{la.title} — {la.name}") if opts else None
+        st.caption(f"{len(caps.layers)} capas; WMS {caps.version}.")
+    else:
+        with st.expander("¿No carga el listado? Escriba la capa a mano"):
+            st.caption("Útil si el servidor no responde a la lista de capas pero sí a las imágenes. Si el servidor "
+                       "bloquea a Streamlit Cloud, ejecute la app en su computadora: `streamlit run app/streamlit_app.py`.")
+            mname = st.text_input("Nombre exacto de la capa", key="manual_layer")
+            mcrs = st.selectbox("CRS de la petición", list(ogc.PREFERRED_CRS), key="manual_crs")
+            mver = st.selectbox("Versión WMS", ["1.3.0", "1.1.1"], key="manual_ver")
+            if mname.strip():
+                layer = ogc.WmsLayer(mname.strip(), mname.strip(), [mcrs])
+                caps = ogc.WmsCapabilities(wms_url, mver, "(manual)", ["image/png"], [layer])
 
-    st.subheader("3. Área (máximo ≈ 260 m de lado)")
-    m = folium.Map(location=[-0.1807, -78.4678], zoom_start=13, control_scale=True)
+    st.subheader("2. Elija el centro y el tamaño del área")
+    side = st.slider("Tamaño del cuadrado (metros de lado)", MIN_SIDE_M, MAX_SIDE_M, DEFAULT_SIDE_M, 10.0,
+                     help=f"Entre {MIN_SIDE_M:.0f} y {MAX_SIDE_M:.0f} m. Más pequeño pierde contexto; más grande "
+                          "obliga a bajar la resolución de la imagen que recibe el modelo.")
+    px = min(512, math.ceil(side / 0.3))
+    st.caption(f"Imagen solicitada ≈ {px}×{px} px, resolución de la petición ≈ {side / px:.2f} m/píxel "
+               "(el modelo se entrenó con ~0,5 m).")
+    center = st.session_state.get("center")
+    view = st.session_state.get("map_view") or DEFAULT_VIEW
+    m = folium.Map(location=view[:2], zoom_start=view[2], control_scale=True)
+    extent = layer.bbox_lonlat if layer is not None else None
+    if extent:
+        w, s_, e, n = extent
+        folium.Rectangle([[s_, w], [n, e]], color="#1f77ff", weight=2, fill=False, dash_array="6",
+                         tooltip="Cobertura declarada de la capa").add_to(m)
+        if st.session_state.get("fit_for") != (wms_url, layer.name):
+            m.fit_bounds([[s_, w], [n, e]])
+            st.session_state["fit_for"] = (wms_url, layer.name)
     if layer is not None and caps is not None:
         try:
             folium.raster_layers.WmsTileLayer(url=wms_url, layers=layer.name, fmt="image/png", transparent=True,
-                                              version=caps.version, name="WMS seleccionado", overlay=True).add_to(m)
+                                              version=caps.version, name="Capa WMS", overlay=True).add_to(m)
         except Exception:  # noqa: BLE001 - overlay is a convenience only
             pass
-    Draw(export=False, draw_options={"rectangle": True, "polyline": False, "polygon": False, "circle": False,
-                                     "marker": False, "circlemarker": False}, edit_options={"edit": False}).add_to(m)
+    bbox = None
+    if center:
+        bbox = _bbox_from_center(center[1], center[0], side)
+        folium.Rectangle([[bbox[1], bbox[0]], [bbox[3], bbox[2]]], color="#e63946", weight=3, fill=True,
+                         fill_opacity=0.15, tooltip=f"Área: {side:.0f} m de lado").add_to(m)
     folium.LayerControl().add_to(m)
-    mp = st_folium(m, height=420, use_container_width=True, returned_objects=["last_active_drawing"], key="qmap")
-    bbox = _bbox_from_drawing((mp or {}).get("last_active_drawing"))
-    with st.expander("…o escriba coordenadas (centro + lado)"):
-        lon = st.number_input("Longitud", value=-78.4678, format="%.6f")
-        lat = st.number_input("Latitud", value=-0.1807, format="%.6f")
-        side = st.number_input("Lado del cuadrado (m)", 50.0, MAX_SIDE_M, 120.0, 10.0)
-        if st.checkbox("Usar estas coordenadas en lugar del dibujo"):
-            bbox = _bbox_from_center(lon, lat, side)
-    if bbox:
-        st.caption(f"Área: lado ≈ {_side_m(bbox):.0f} m · W {bbox[0]:.5f}, S {bbox[1]:.5f}, E {bbox[2]:.5f}, N {bbox[3]:.5f}")
-    if bbox and _side_m(bbox) > MAX_SIDE_M:
-        st.error(f"El área es demasiado grande ({_side_m(bbox):.0f} m). Máximo {MAX_SIDE_M:.0f} m de lado.")
-        bbox = None
+    mp = st_folium(m, height=460, use_container_width=True, returned_objects=["last_clicked", "center", "zoom"],
+                   key="qmap") or {}
+    if mp.get("center") and mp.get("zoom") is not None:
+        st.session_state["map_view"] = (mp["center"]["lat"], mp["center"]["lng"], mp["zoom"])
+    click = mp.get("last_clicked")
+    if click and click != st.session_state.get("click_seen"):
+        st.session_state["click_seen"] = click
+        _set_center(click["lat"], click["lng"])
+        st.rerun()
+    with st.expander("…o escriba las coordenadas del centro"):
+        c = center or (-0.1807, -78.4678)
+        lat_in = st.number_input("Latitud", value=float(c[0]), format="%.6f", key="lat_in")
+        lon_in = st.number_input("Longitud", value=float(c[1]), format="%.6f", key="lon_in")
+        if st.button("Usar este centro"):
+            _set_center(lat_in, lon_in)
+            st.rerun()
 
-    ready = bool(bbox and layer is not None)
-    if st.button("▶ Descargar área y ejecutar inferencia", type="primary", disabled=not ready):
+    problem = None
+    if not center:
+        st.info("👆 Haga clic en el mapa para colocar el centro del cuadrado.")
+        problem = "sin centro"
+    elif layer is None:
+        st.info("Elija una capa para continuar.")
+        problem = "sin capa"
+    elif extent and not ogc.bbox_intersects(bbox, extent):
+        st.error("El cuadrado queda **fuera de la cobertura declarada de la capa** (línea azul). Haga clic dentro de ella.")
+        problem = "fuera de cobertura"
+    elif not extent:
+        st.warning("La capa no declara su cobertura: no se puede comprobar si el cuadrado tiene datos.")
+    else:
+        st.success(f"Área válida: {side:.0f} m de lado dentro de la cobertura de la capa.")
+
+    if st.button("▶ Descargar área y ejecutar inferencia", type="primary", disabled=problem is not None):
         if not _JOB_LOCK.acquire(blocking=False):
             st.warning("Hay otra inferencia en curso. Intente de nuevo en unos segundos.")
             return
@@ -308,69 +298,51 @@ def tab_map():
             try:
                 with st.spinner("Pidiendo la imagen al WMS (una sola petición)…"):
                     img = ogc.wms_get_map(wms_url, layer.name, bbox, layer.crs, caps.version, 0.3)
-                ref = ref_rep = wfs_info = None
-                if use_wfs and wfs_url and wfs_type:
-                    with st.spinner("Pidiendo los polígonos al WFS (una sola petición)…"):
-                        data, wfs_info = ogc.wfs_get_features(wfs_url, wfs_type, bbox, img.crs)
-                    ref, ref_rep = reference_from_geojson(data, wfs_info["srs"], kind, source=wfs_url)
-                    if wfs_info["truncated"]:
-                        st.warning("El WFS devolvió el máximo de entidades permitido; la comparación puede estar incompleta.")
-                    if not len(ref):
-                        st.warning("El WFS no devolvió polígonos utilizables en este cuadrado; se omite la comparación.")
-                        ref = None
             except (ogc.OGCError, ValueError) as exc:
-                st.error(f"No se pudo obtener los datos: {exc}")
+                st.error(f"No se pudo obtener la imagen: {exc}")
                 return
-            if not img.valid.any():
-                st.error("La imagen devuelta está vacía (sin datos en esa zona o capa).")
+            reason = ogc.blank_reason(img)
+            if reason:
+                st.error(f"La capa devolvió una imagen **{reason}** para este cuadrado. Suele pasar cuando la capa no "
+                         "tiene datos en esa zona (p. ej. vuelos de dron de áreas concretas). Mueva el centro dentro "
+                         "de la zona con imagen o pruebe otra capa.")
+                st.image(img.array, caption="Imagen devuelta por el servicio", width=240)
                 return
             cfg = PipelineConfig()
             cfg.tiling.tile_size, cfg.tiling.overlap = 512, 0
             with tempfile.TemporaryDirectory() as tmp:
                 tif = ogc.write_geotiff(img, str(Path(tmp) / "wms_area.tif"))
                 with st.spinner("Ejecutando el modelo en CPU…"):
-                    out = run_raster(tif, None, cfg, reference_set=ref,
-                                     reference_report=ref_rep.to_dict() if ref_rep else None, predictor=predictor)
+                    out = run_raster(tif, None, cfg, predictor=predictor)
                 tif_bytes = Path(tif).read_bytes()
-            cands = out.matching.candidates if out.matching else out.candidates
             base = Image.fromarray(img.array).convert("RGB")
             draw = ImageDraw.Draw(base)
-            if out.matching:
-                for g in _to_pixels(out.matching.references.geoms, out.matching.crs, img):
-                    draw.line(list(g.exterior.coords), fill=(80, 200, 255), width=2)
-            for g, a in zip(_to_pixels(cands.geoms, cands.crs, img), cands.attrs, strict=True):
-                draw.line(list(g.exterior.coords), fill=CLASS_COLORS.get(a.get("match_class"), (255, 235, 0)), width=2)
+            for g in _to_pixels(out.candidates.geoms, out.candidates.crs, img):
+                draw.line(list(g.exterior.coords), fill=(255, 235, 0), width=2)
             a1, a2 = st.columns(2)
             a1.image(img.array, caption=f"Imagen WMS descargada ({img.array.shape[1]}×{img.array.shape[0]} px, "
-                                        f"GSD de la petición ≈ {img.meta['approx_gsd_m']} m)")
-            a2.image(base, caption="Candidatos (colores por clase) y referencia WFS (cian)")
-            k1, k2, k3 = st.columns(3)
+                                        f"≈ {img.meta['approx_gsd_m']} m/píxel)")
+            a2.image(base, caption="Huellas candidatas")
+            k1, k2, k3, k4 = st.columns(4)
             k1.metric("Candidatos", len(out.candidates))
-            k2.metric("Tiempo CPU (s)", f"{out.report['segmentation']['total_s']:.1f}")
-            k3.metric("Memoria pico (MB)", f"{resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f}")
-            if out.matching:
-                cc = out.matching.summary["candidates_by_class"]
-                rc = out.matching.summary["references_by_class"]
-                st.markdown("**Comparación con los polígonos del WFS** (umbrales de demostración, no tolerancias oficiales)")
-                st.table({"Clase": [LABELS_ES[k] for k in cc], "Candidatos": list(cc.values()),
-                          "Referencias": [rc[k] for k in cc]})
-                st.info("Las discrepancias son avisos para **revisión humana**; no prueban errores catastrales, "
-                        "construcciones no registradas ni ilegales. Un techo visible no es el límite catastral.")
-            st.caption("Imagen y vectores obtenidos de servicios externos; compruebe sus condiciones de uso antes de reutilizarlos.")
+            k2.metric("Área total (m²)", f"{out.candidates.total_area:,.0f}")
+            k3.metric("Tiempo CPU (s)", f"{out.report['segmentation']['total_s']:.1f}")
+            k4.metric("Memoria pico (MB)", f"{resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f}")
+            st.info("Son **candidatos** para revisión humana, no límites catastrales. Descargue las huellas y compárelas "
+                    "con sus vectores en su SIG o con `qbl compare`.")
+            st.caption("Imagen obtenida de un servicio externo; compruebe sus condiciones de uso antes de reutilizarla.")
             report = dict(out.report)
-            report["fetch"] = {"wms": img.meta, "wfs": wfs_info}
-            d1, d2, d3, d4 = st.columns(4)
+            report["fetch"] = {"wms": img.meta}
+            d1, d2, d3 = st.columns(3)
             d1.download_button("Imagen (GeoTIFF)", tif_bytes, "wms_area.tif", "image/tiff")
-            d2.download_button("Candidatos (GeoJSON)", json.dumps(to_geojson_dict(cands)).encode(),
+            d2.download_button("Huellas candidatas (GeoJSON)", json.dumps(to_geojson_dict(out.candidates)).encode(),
                                "candidatos.geojson", "application/geo+json")
-            if out.matching:
-                d3.download_button("Referencia (GeoJSON)", json.dumps(to_geojson_dict(out.matching.references)).encode(),
-                                   "referencia.geojson", "application/geo+json")
-            d4.download_button("Informe (JSON)", json.dumps(report, indent=2, default=str).encode(), "informe.json")
+            d3.download_button("Informe (JSON)", json.dumps(report, indent=2, default=str).encode(), "informe.json")
         finally:
             _JOB_LOCK.release()
 
-tabs = st.tabs(["Imagen propia", "Mapa WMS de Quito (área pequeña)"])
+
+tabs = st.tabs(["Imagen propia", "Mapa WMS (cualquier servicio)"])
 with tabs[0]:
     tab_upload()
 with tabs[1]:
