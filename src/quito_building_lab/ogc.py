@@ -138,6 +138,9 @@ def _raise_if_exception(root: ET.Element) -> None:
 
 
 # ----------------------------------------------------------------------------------------- WMS
+DEFAULT_NATIVE_ZOOM = 19
+
+
 @dataclass
 class WmsLayer:
     name: str
@@ -152,6 +155,15 @@ class WmsLayer:
         def zoom(denom):
             return None if not denom else math.log2(156_543.03392 / (denom * 0.00028))
         return zoom(self.max_scale), zoom(self.min_scale)
+
+    def native_zoom(self, default: int = DEFAULT_NATIVE_ZOOM) -> int:
+        """Deepest web-map zoom to request from the server; deeper views enlarge that level's tiles.
+
+        Orthophoto services rarely draw (or fail) beyond their source detail; zoom 19 is about 0.3 m/px at the
+        equator. A declared MinScaleDenominator lowers it further.
+        """
+        zmax = self.zoom_range()[1]
+        return max(1, min(default, math.floor(zmax))) if zmax else default
 
 
 @dataclass

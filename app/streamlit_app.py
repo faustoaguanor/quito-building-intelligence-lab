@@ -361,7 +361,10 @@ def tab_map():
             try:
                 folium.raster_layers.WmsTileLayer(url=wms_url, layers=layer.name, fmt="image/png", transparent=True,
                                                   version=caps.version, name="Capa WMS", overlay=True,
-                                                  max_zoom=MAX_ZOOM).add_to(base)
+                                                  max_zoom=MAX_ZOOM,
+                                                  # beyond this level, enlarge the last tiles instead of asking the
+                                                  # server for detail it does not draw (the layer vanished there)
+                                                  max_native_zoom=layer.native_zoom()).add_to(base)
             except Exception:  # noqa: BLE001 - overlay is a convenience only
                 pass
         st.session_state.pop("probe", None)
