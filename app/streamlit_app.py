@@ -176,6 +176,7 @@ def cached_wms_caps(url: str):
 
 
 MIN_SIDE_M, MAX_SIDE_M, DEFAULT_SIDE_M = 80.0, 260.0, 150.0
+MAX_ZOOM = 22  # Leaflet hides a layer above its maxZoom (default 18): without this the WMS vanishes when zooming in
 DEFAULT_VIEW = (-1.4, -78.4, 6)  # Ecuador; the map zooms to the layer extent once a layer is chosen
 
 
@@ -202,6 +203,17 @@ def _default_center(extent):
     lat = (s_ + n) / 2
     size_m = max((e - w) * 111_320.0 * math.cos(math.radians(lat)), (n - s_) * 110_574.0)
     return (lat, (w + e) / 2) if size_m <= 3000 else None
+
+
+def _prob_overlay(rgb: np.ndarray, prob: np.ndarray) -> Image.Image:
+    """Heat-map of the model probability blended over the image (nearest resize if the grids differ)."""
+    h, w = rgb.shape[:2]
+    p = Image.fromarray((np.clip(prob, 0, 1) * 255).astype(np.uint8))
+    if p.size != (w, h):
+        p = p.resize((w, h), Image.NEAREST)
+    a = np.asarray(p).astype(np.float32) / 255.0
+    heat = np.stack([a * 255, a * 120, (1 - a) * 80], axis=-1)
+    return Image.fromarray((rgb * (1 - 0.55 * a[..., None]) + heat * 0.55 * a[..., None]).clip(0, 255).astype(np.uint8))
 
 
 def _set_center(lat: float, lon: float) -> None:
@@ -234,6 +246,12 @@ def tab_map():
         opts = [la for la in caps.layers if q in la.name.lower() or q in la.title.lower()][:300]
         layer = st.selectbox("Capa", opts, format_func=lambda la: f"{la.title} — {la.name}") if opts else None
         st.caption(f"{len(caps.layers)} capas; WMS {caps.version}.")
+        if layer is not None and (layer.min_scale or layer.max_scale):
+            z0, z1 = layer.zoom_range()
+            st.caption("ℹ️ El servicio declara que esta capa solo se dibuja "
+                       + (f"hasta una escala 1:{layer.min_scale:,.0f} (zoom ≈ {z1:.0f}) " if layer.min_scale else "")
+                       + (f"y desde 1:{layer.max_scale:,.0f} (zoom ≈ {z0:.0f}). " if layer.max_scale else ". ")
+                       + "Fuera de ese rango el servidor no dibuja la capa y solo verá el mapa base: no es un fallo de la app.")
     else:
         with st.expander("¿No carga el listado? Escriba la capa a mano"):
             st.caption("Útil si el servidor no responde a la lista de capas pero sí a las imágenes. Si el servidor "
@@ -251,7 +269,17 @@ def tab_map():
     side = st.slider("Tamaño del cuadrado (metros de lado)", MIN_SIDE_M, MAX_SIDE_M, DEFAULT_SIDE_M, 10.0,
                      help=f"Entre {MIN_SIDE_M:.0f} y {MAX_SIDE_M:.0f} m. Más pequeño pierde contexto; más grande "
                           "obliga a bajar la resolución de la imagen que recibe el modelo.")
-    px = min(512, math.ceil(side / 0.3))
+    with st.expander("Ajustes avanzados (para probar en otras zonas, p. ej. la costa)"):
+        st.caption("Si el modelo no detecta bien en una zona, pruebe aquí: bajar el umbral, cambiar la resolución de la "
+                   "petición o ver el mapa de probabilidad para saber si el modelo ve algo.")
+        adv_thr = st.slider("Umbral de probabilidad", 0.20, 0.90, 0.50, 0.05, key="adv_thr",
+                            help="Más bajo detecta más (y más falsos positivos); más alto es más estricto.")
+        adv_min_area = st.slider("Área mínima de cada huella (m²)", 4.0, 100.0, 8.0, 2.0, key="adv_min_area")
+        adv_gsd = st.slider("Resolución pedida al servicio (m/píxel)", 0.20, 0.60, 0.30, 0.05, key="adv_gsd",
+                            help="El modelo se entrenó con ~0,5 m/píxel. Con un cuadrado grande la imagen se limita a "
+                                 "512 px, así que la resolución real puede ser más gruesa que la pedida.")
+        adv_prob = st.checkbox("Mostrar el mapa de probabilidad del modelo", value=True, key="adv_prob")
+    px = min(512, math.ceil(side / adv_gsd))
     st.caption(f"Cuadrado de {side:.0f} × {side:.0f} m ({side * side / 10_000:.1f} ha) → imagen ≈ {px}×{px} px, "
                f"≈ {side / px:.2f} m/píxel (el modelo se entrenó con ~0,5 m).")
     extent = layer.bbox_lonlat if layer is not None else None
@@ -261,7 +289,9 @@ def tab_map():
     # reruns the app or rebuilds the map (that caused the flicker and the vanishing layers).
     map_key = (wms_url, layer.name if layer is not None else None, caps.version if caps else None)
     if st.session_state.get("map_key") != map_key:
-        base = folium.Map(location=DEFAULT_VIEW[:2], zoom_start=DEFAULT_VIEW[2], control_scale=True)
+        base = folium.Map(location=DEFAULT_VIEW[:2], zoom_start=DEFAULT_VIEW[2], control_scale=True,
+                          tiles=None, max_zoom=MAX_ZOOM)
+        folium.TileLayer("OpenStreetMap", name="Mapa base", max_zoom=MAX_ZOOM, max_native_zoom=19).add_to(base)
         if extent:
             w, s_, e, n = extent
             folium.Rectangle([[s_, w], [n, e]], color="#1f77ff", weight=2, fill=False, dash_array="6",
@@ -270,7 +300,8 @@ def tab_map():
         if layer is not None and caps is not None:
             try:
                 folium.raster_layers.WmsTileLayer(url=wms_url, layers=layer.name, fmt="image/png", transparent=True,
-                                                  version=caps.version, name="Capa WMS", overlay=True).add_to(base)
+                                                  version=caps.version, name="Capa WMS", overlay=True,
+                                                  max_zoom=MAX_ZOOM).add_to(base)
             except Exception:  # noqa: BLE001 - overlay is a convenience only
                 pass
         st.session_state.update(map_key=map_key, base_map=base, map_ver=st.session_state.get("map_ver", 0) + 1,
@@ -330,9 +361,17 @@ def tab_map():
                 return
             try:
                 with st.spinner("Pidiendo la imagen al WMS (una sola petición)…"):
-                    img = ogc.wms_get_map(wms_url, layer.name, bbox, layer.crs, caps.version, 0.3)
+                    img = ogc.wms_get_map(wms_url, layer.name, bbox, layer.crs, caps.version, adv_gsd)
             except (ogc.OGCError, ValueError) as exc:
                 st.error(f"No se pudo obtener la imagen: {exc}")
+                attempts = getattr(exc, "attempts", None)
+                if attempts:
+                    st.caption("El servicio rechazó la petición con cada sistema de coordenadas disponible (hasta 3 "
+                               "intentos). El error viene del servidor del WMS, no de la app: pruebe otra capa u otra zona.")
+                    with st.expander("Detalles técnicos (para reproducirlo en el navegador)"):
+                        for a in attempts:
+                            st.markdown(f"**{a['crs']}** — {'✅ ok' if a['ok'] else '❌ ' + a.get('error', '')}")
+                            st.code(a["url"], language=None)
                 return
             reason = ogc.blank_reason(img)
             if reason:
@@ -343,6 +382,7 @@ def tab_map():
                 return
             cfg = PipelineConfig()
             cfg.tiling.tile_size, cfg.tiling.overlap = 512, 0
+            cfg.postprocess.threshold, cfg.postprocess.min_area_m2 = adv_thr, adv_min_area
             with tempfile.TemporaryDirectory() as tmp:
                 tif = ogc.write_geotiff(img, str(Path(tmp) / "wms_area.tif"))
                 with st.spinner("Ejecutando el modelo en CPU…"):
@@ -352,10 +392,23 @@ def tab_map():
             draw = ImageDraw.Draw(base)
             for g in _to_pixels(out.candidates.geoms, out.candidates.crs, img):
                 draw.line(list(g.exterior.coords), fill=(255, 235, 0), width=2)
-            a1, a2 = st.columns(2)
-            a1.image(img.array, caption=f"Imagen WMS descargada ({img.array.shape[1]}×{img.array.shape[0]} px, "
-                                        f"≈ {img.meta['approx_gsd_m']} m/píxel)")
-            a2.image(base, caption="Huellas candidatas")
+            prob = np.asarray(out.segmentation.probability)
+            cols = st.columns(3 if adv_prob else 2)
+            cols[0].image(img.array, caption=f"Imagen WMS descargada ({img.array.shape[1]}×{img.array.shape[0]} px, "
+                                             f"≈ {img.meta['approx_gsd_m']} m/píxel)")
+            cols[1].image(base, caption="Huellas candidatas")
+            if adv_prob:
+                cols[2].image(_prob_overlay(img.array, prob), caption="Probabilidad del modelo (más claro = más probable)")
+            pmax, share = float(prob.max()), float((prob >= adv_thr).mean()) * 100
+            st.caption(f"Probabilidad máxima del modelo: {pmax:.2f} · píxeles por encima del umbral ({adv_thr:.2f}): {share:.1f} %")
+            if len(out.candidates) == 0:
+                if pmax < adv_thr:
+                    st.warning("El modelo no ve edificios con esta configuración (su probabilidad máxima no llega al "
+                               "umbral). Pruebe bajar el umbral o cambiar la resolución; si sigue igual, la zona es "
+                               "demasiado distinta de los datos de entrenamiento.")
+                else:
+                    st.warning("Hay probabilidad por encima del umbral pero las huellas son más pequeñas que el área "
+                               "mínima. Pruebe bajar el área mínima.")
             k1, k2, k3, k4 = st.columns(4)
             k1.metric("Candidatos", len(out.candidates))
             k2.metric("Área total (m²)", f"{out.candidates.total_area:,.0f}")

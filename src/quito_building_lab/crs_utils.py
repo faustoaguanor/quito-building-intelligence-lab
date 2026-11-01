@@ -22,8 +22,15 @@ def to_crs(value) -> CRS:
     return value if isinstance(value, CRS) else CRS.from_user_input(value)
 
 
+def is_web_mercator(crs: CRS) -> bool:
+    """EPSG:3857 'metres' are stretched by 1/cos(latitude): lengths and areas are NOT true metres."""
+    crs = to_crs(crs)  # also accepts rasterio / string CRS definitions
+    return crs.to_epsg() in (3857, 900913) or "pseudo-mercator" in crs.name.lower()
+
+
 def is_metric(crs: CRS) -> bool:
-    if not crs.is_projected:
+    crs = to_crs(crs)
+    if not crs.is_projected or is_web_mercator(crs):
         return False
     units = {ax.unit_name.lower() for ax in crs.axis_info}
     return units <= {"metre", "meter", "m"}

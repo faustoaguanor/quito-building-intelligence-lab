@@ -31,14 +31,29 @@ USER_AGENT = "quito-building-lab/0.1 (+https://github.com/faustoaguanor/quito-bu
 
 # Example service supplied by a user (not verified by the maintainers). Any WMS URL can be used instead.
 EXAMPLE_WMS = {
-    "IGM Ecuador · ortofotos 2022 (por defecto)": "https://www.geoportaligm.gob.ec/orto/toma2022/wms",
-    "IGM Ecuador · ortofotos UAV (ejemplo)": "https://www.geoportaligm.gob.ec/orto/uav_igm/wms",
+    "IGM Ecuador · ortofotos (por defecto)": "https://www.geoportaligm.gob.ec/orto/igm/wms",
+    "IGM Ecuador · ortofotos 2022": "https://www.geoportaligm.gob.ec/orto/toma2022/wms",
+    "IGM Ecuador · ortofotos UAV": "https://www.geoportaligm.gob.ec/orto/uav_igm/wms",
 }
-PREFERRED_CRS = ("EPSG:32717", "EPSG:3857", "EPSG:4326", "CRS:84")
+# EPSG:3857 first: it is what web maps (and therefore the layer overlay the user sees) request, so it is the
+# most widely exercised path of a WMS. The others are fallbacks, tried only if the service fails the request.
+PREFERRED_CRS = ("EPSG:3857", "EPSG:32717", "EPSG:4326", "CRS:84")
+MAX_CRS_ATTEMPTS = 3
 
 
 class OGCError(RuntimeError):
     """Remote service error, unsafe URL, or unusable response."""
+
+
+class OGCServiceError(OGCError):
+    """The service answered but refused or failed the request (HTTP error or ServiceException).
+
+    ``attempts`` lists what was tried (CRS and request URL) so the user can reproduce it in a browser.
+    """
+
+    def __init__(self, message: str, attempts: list[dict] | None = None):
+        super().__init__(message)
+        self.attempts = attempts or []
 
 
 @dataclass
@@ -86,7 +101,7 @@ def _get(base_url: str, params: dict, policy: UrlPolicy) -> tuple[bytes, str]:
             body = resp.read(policy.max_bytes + 1)
             ctype = resp.headers.get("Content-Type", "")
     except urllib.error.HTTPError as exc:
-        raise OGCError(f"The service answered HTTP {exc.code}.") from exc
+        raise OGCServiceError(f"The service answered HTTP {exc.code}.") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise OGCError(f"Could not reach the service: {exc}") from exc
     if len(body) > policy.max_bytes:
@@ -119,7 +134,7 @@ def _parse_xml(body: bytes) -> ET.Element:
 def _raise_if_exception(root: ET.Element) -> None:
     if _local(root.tag) in ("ServiceExceptionReport", "ExceptionReport"):
         msgs = [(e.text or "").strip() for e in root.iter() if _local(e.tag) in ("ServiceException", "ExceptionText")]
-        raise OGCError("Service error: " + ("; ".join(m for m in msgs if m) or "unknown"))
+        raise OGCServiceError("Service error: " + ("; ".join(m for m in msgs if m) or "unknown"))
 
 
 # ----------------------------------------------------------------------------------------- WMS
@@ -129,6 +144,14 @@ class WmsLayer:
     title: str
     crs: list[str]
     bbox_lonlat: tuple[float, float, float, float] | None = None
+    min_scale: float | None = None  # MinScaleDenominator: below it (zoomed in further) the server draws nothing
+    max_scale: float | None = None  # MaxScaleDenominator: above it (zoomed out further) the server draws nothing
+
+    def zoom_range(self) -> tuple[float | None, float | None]:
+        """Approximate web-map zoom levels (at the equator) matching the declared scale limits."""
+        def zoom(denom):
+            return None if not denom else math.log2(156_543.03392 / (denom * 0.00028))
+        return zoom(self.max_scale), zoom(self.min_scale)
 
 
 @dataclass
@@ -158,7 +181,13 @@ def wms_capabilities(url: str, policy: UrlPolicy | None = None) -> WmsCapabiliti
             formats = [f.text.strip() for f in _children(gm, "Format") if f.text]
     layers: list[WmsLayer] = []
 
-    def walk(el, inherited_crs):
+    def num(el, name):
+        try:
+            return float(_text(el, name)) or None
+        except ValueError:
+            return None
+
+    def walk(el, inherited_crs, scales=(None, None)):
         crs = list(inherited_crs) + [c.text.strip() for c in el if _local(c.tag) in ("CRS", "SRS") and c.text]
         # SRS in 1.1.1 may hold a space-separated list
         crs = [x for item in crs for x in item.split()]
@@ -176,11 +205,13 @@ def wms_capabilities(url: str, policy: UrlPolicy | None = None) -> WmsCapabiliti
                             float(c.attrib["maxx"]), float(c.attrib["maxy"]))
                 except (KeyError, ValueError):
                     bbox = None
+        mn = num(el, "MinScaleDenominator") or scales[0]
+        mx = num(el, "MaxScaleDenominator") or scales[1]
         name = _text(el, "Name")
         if name:
-            layers.append(WmsLayer(name, _text(el, "Title", name), sorted(set(crs)), bbox))
+            layers.append(WmsLayer(name, _text(el, "Title", name), sorted(set(crs)), bbox, mn, mx))
         for sub in _children(el, "Layer"):
-            walk(sub, crs)
+            walk(sub, crs, (mn, mx))
 
     for top in _children(cap, "Layer"):
         walk(top, [])
@@ -195,6 +226,17 @@ def choose_crs(layer_crs: list[str], preferred=PREFERRED_CRS) -> str:
     if not layer_crs:  # layer inherits nothing listed: assume the most common one
         return "EPSG:4326"
     raise OGCError("The layer offers none of the supported CRS: " + ", ".join(layer_crs[:6]))
+
+
+def choose_crs_chain(layer_crs: list[str], preferred=PREFERRED_CRS, limit: int = MAX_CRS_ATTEMPTS) -> list[str]:
+    """Supported CRS in preference order (at most ``limit``); a layer that lists none gets the common ones."""
+    upper = {c.upper(): c for c in layer_crs}
+    chain = [p for p in preferred if p in upper]
+    if not layer_crs:
+        chain = ["EPSG:3857", "EPSG:4326"]
+    if not chain:
+        raise OGCError("The layer offers none of the supported CRS: " + ", ".join(layer_crs[:6]))
+    return chain[:limit]
 
 
 def _swap_axes(crs: CRS, version: str, crs_code: str) -> bool:
@@ -246,29 +288,36 @@ def wms_get_map(
 ) -> GeoImage:
     """One GetMap request for a small area; georeferenced from the requested bbox + CRS."""
     policy = policy or UrlPolicy()
-    crs_code = choose_crs(layer_crs or [])
-    crs = CRS.from_user_input(crs_code)
-    bbox = bbox_lonlat_to_crs(bbox_lonlat, crs_code)
-    # metric extent (for pixel size): use UTM-like metres via a local transform when CRS is geographic
-    if crs.is_geographic:
-        lat = (bbox_lonlat[1] + bbox_lonlat[3]) / 2
-        bbox_m = (0.0, 0.0, (bbox_lonlat[2] - bbox_lonlat[0]) * 111_320 * math.cos(math.radians(lat)),
-                  (bbox_lonlat[3] - bbox_lonlat[1]) * 110_574)
-    else:
-        bbox_m = bbox
+    # ground size in metres from the lon/lat box (independent of the request CRS, e.g. Web Mercator)
+    lat = (bbox_lonlat[1] + bbox_lonlat[3]) / 2
+    bbox_m = (0.0, 0.0, (bbox_lonlat[2] - bbox_lonlat[0]) * 111_320 * math.cos(math.radians(lat)),
+              (bbox_lonlat[3] - bbox_lonlat[1]) * 110_574)
     width, height, gsd = image_size_for(bbox_m, target_gsd, max_side)
-    bb = (bbox[1], bbox[0], bbox[3], bbox[2]) if _swap_axes(crs, version, crs_code) else bbox
-    params = {
-        "service": "WMS", "version": version, "request": "GetMap", "layers": layer, "styles": styles,
-        "bbox": ",".join(f"{v:.8f}".rstrip("0").rstrip(".") for v in bb),
-        "width": width, "height": height, "format": fmt, "transparent": "true",
-        ("crs" if version == "1.3.0" else "srs"): crs_code,
-    }
-    body, ctype = _get(url, params, policy)
-    if not ctype.lower().startswith("image/"):
-        root = _parse_xml(body)
-        _raise_if_exception(root)
-        raise OGCError("The service did not return an image.")
+    attempts: list[dict] = []
+    body = ctype = crs_code = bbox = None
+    for crs_code in choose_crs_chain(layer_crs or []):
+        crs = CRS.from_user_input(crs_code)
+        bbox = bbox_lonlat_to_crs(bbox_lonlat, crs_code)
+        bb = (bbox[1], bbox[0], bbox[3], bbox[2]) if _swap_axes(crs, version, crs_code) else bbox
+        params = {
+            "service": "WMS", "version": version, "request": "GetMap", "layers": layer, "styles": styles,
+            "bbox": ",".join(f"{v:.8f}".rstrip("0").rstrip(".") for v in bb),
+            "width": width, "height": height, "format": fmt, "transparent": "true",
+            ("crs" if version == "1.3.0" else "srs"): crs_code,
+        }
+        request_url = url.rstrip("?&") + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+        try:
+            body, ctype = _get(url, params, policy)
+            if not ctype.lower().startswith("image/"):
+                _raise_if_exception(_parse_xml(body))
+                raise OGCServiceError("The service did not return an image.")
+            attempts.append({"crs": crs_code, "ok": True, "url": request_url})
+            break
+        except OGCServiceError as exc:
+            attempts.append({"crs": crs_code, "ok": False, "error": str(exc), "url": request_url})
+            body = None
+    if body is None:
+        raise OGCServiceError(attempts[-1]["error"] + f" (tried {', '.join(a['crs'] for a in attempts)})", attempts)
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # PNG/JPEG have no geotransform: expected, we georeference from bbox
@@ -285,7 +334,7 @@ def wms_get_map(
     return GeoImage(
         rgb, valid, from_bounds(*bbox, w, h), crs_code, bbox,
         {"service_url": url, "layer": layer, "version": version, "request_crs": crs_code, "size_px": [w, h],
-         "had_alpha": bool(data.shape[0] >= 4),
+         "had_alpha": bool(data.shape[0] >= 4), "attempts": attempts,
          "approx_gsd_m": round(gsd, 3), "format": fmt,
          "note": "Rendered WMS image; not original orthophoto pixels. GSD is the request grid, not the source GSD."},
     )
