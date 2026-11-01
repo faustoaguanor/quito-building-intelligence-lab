@@ -9,14 +9,15 @@
 <p class="sub">AI-Assisted Building Footprint Extraction and Cadastral Quality Assessment. Un motor Python reutilizable que detecta cubiertas candidatas en ortofotos de alta resolución, las vectoriza con georreferenciación válida y las compara con geometría catastral para priorizar revisión humana.</p>
 <nav><a href="#contexto">Contexto</a><a href="#flujo">Flujo</a><a href="#arquitectura">Arquitectura</a><a href="#modelo">Modelo</a><a href="#resultados">Resultados</a><a href="#calidad">Calidad</a><a href="#limites">Límites</a><a href="#instalar">Instalación</a></nav>
 <a class="btn p" href="https://github.com/faustoaguanor/quito-building-intelligence-lab">Repositorio en GitHub</a>
-<a class="btn" id="demo-link" href="https://github.com/faustoaguanor/quito-building-intelligence-lab/blob/main/docs/DEPLOYMENT.md">Demo Streamlit: instrucciones de despliegue</a>
+<a class="btn p" id="demo-link" href="https://quito-building-intelligence-lab-iwqerwtcb7lbmjx7yfd3rx.streamlit.app/">Probar la demo en Streamlit</a>
+<a class="btn" href="https://github.com/faustoaguanor/quito-building-intelligence-lab/releases/tag/model-onnx-v1">Modelo ONNX (Release)</a>
 <div class="stats">
 <div><span class="stat">29,3 M</span><span class="mut">parámetros del modelo</span></div>
 <div><span class="stat">1,4 s</span><span class="mut">por tesela 512² (ONNX, CPU)</span></div>
 <div><span class="stat">50</span><span class="mut">pruebas automáticas</span></div>
 <div><span class="stat">3</span><span class="mut">destinos, un solo motor</span></div>
 </div>
-<p class="mut">Estado honesto: la demo pública de Streamlit y el modelo en Hugging Face <b>aún no están publicados</b>; este sitio no ejecuta inferencia (es estático). Los resultados mostrados fueron generados por el código del repositorio.</p>
+<p class="mut">Estado: la demo de Streamlit hace inferencia real en CPU sobre una imagen pequeña (puede tardar al iniciar si la app estaba dormida). El modelo ONNX está en una Release de GitHub; <b>no está publicado en Hugging Face</b>. Este sitio es estático y no ejecuta inferencia: los resultados mostrados fueron generados por el código del repositorio.</p>
 </div></header>
 
 <section id="contexto"><div class="wrap"><h2>Contexto y problema</h2>
@@ -57,7 +58,7 @@
 <figure><img src="assets/demo_overlay.png" alt="Polígonos candidatos sobre la imagen" loading="lazy"><figcaption>Amarillo: candidatos · Cian: referencia SpaceNet</figcaption></figure>
 </div>
 <table id="metrics" style="margin-top:20px"><tr><th>Medida (IoU ≥ 0,5)</th><th>Valor</th></tr><tr><td colspan="2" class="mut">Cargando…</td></tr></table>
-<p class="mut">n = 20 edificios en un solo recorte: ilustra el funcionamiento del flujo; <b>no</b> valida la exactitud en Quito. Prueba de escala: mosaico sintético de 3072² px (49 teselas) en 90 s con ~780 MB de RAM pico en CPU.</p></div></section>
+<p class="mut">n = 20 edificios en un solo recorte: ilustra el funcionamiento del flujo; <b>no</b> valida la exactitud en Quito. Demo en Streamlit Cloud con esta misma imagen: 20 candidatos en 2,2 s de CPU, memoria pico 829 MB (una sola ejecución). Prueba de escala: mosaico sintético de 3072² px (49 teselas) en 90 s con ~780 MB de RAM pico en CPU.</p></div></section>
 
 <section id="calidad"><div class="wrap"><h2>Metodología de calidad</h2>
 <div class="grid"><div class="card"><h3>Rendimiento del modelo</h3><p class="mut">Solo frente a etiquetas de techos revisadas de forma independiente.</p></div>

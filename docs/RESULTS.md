@@ -12,5 +12,6 @@
 Caveats: a single 512×512 crop, n = 20, a non-Quito scene, labels from the dataset (not re-reviewed). It shows the pipeline works end-to-end; it is **not** a validation of accuracy in Quito.
 
 **ONNX vs PyTorch** (random input, 512²): max |Δlogit| 5.7e-6, max |Δprob| 3.2e-8, mask agreement 1.0; 1.43 s (ORT) vs 2.21 s (torch) per tile.
-**Streamlit path** (ONNX, no torch/geopandas imported): ~2 s CPU per image, peak RSS ≈ 790 MB (ORT arena off; with arena on, 1.19 GB). This may be tight on Streamlit Community Cloud; the live deployment has not been created or tested.
+**Streamlit path** (ONNX, no torch/geopandas imported), local: ~2 s CPU per image, peak RSS ≈ 790 MB (ORT arena off; with arena on, 1.19 GB).
+**Streamlit Community Cloud** (live demo, bundled example image, one run, reported by the app itself): 20 candidates, 68 970 px², 2.2 s CPU, peak memory 829 MB. Identical candidate count and area to the local run. Only this single run was observed: custom uploads, concurrent use and the plan's memory ceiling were not tested.
 **Large raster:** synthetic 3072×3072 mosaic made by repeating the demo crop, 49 tiles, 90 s total, peak RSS 779 MB, 390 candidates (a scalability/behaviour test, not an accuracy test).
