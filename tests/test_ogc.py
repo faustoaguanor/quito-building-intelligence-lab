@@ -76,6 +76,9 @@ class Handler(BaseHTTPRequestHandler):
             elif q.get("layers") == "alwaysfail" or (q.get("layers") == "flaky" and q.get("crs") == "EPSG:3857"):
                 self.reply(b'<?xml version="1.0"?><ServiceExceptionReport><ServiceException>'
                            b'java.lang.NullPointerException</ServiceException></ServiceExceptionReport>', "text/xml")
+            elif q.get("layers") == "tileonly" and q.get("width") != "256":
+                self.reply(b'<?xml version="1.0"?><ServiceExceptionReport><ServiceException>'
+                           b'java.lang.NullPointerException</ServiceException></ServiceExceptionReport>', "text/xml")
             elif q.get("layers") == "blank":
                 buf = io.BytesIO()
                 Image.new("RGBA", (int(q["width"]), int(q["height"])), (0, 0, 0, 0)).save(buf, "PNG")
@@ -146,7 +149,7 @@ def test_wms_capabilities_parsing(server):
 
 def test_get_map_is_georeferenced_and_requests_a_small_image(server, tmp_path):
     SEEN.clear()
-    img = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:4326", "EPSG:32717"], policy=POL_BIG)
+    img = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:4326", "EPSG:32717"], policy=POL_BIG, tile_size=None)
     req = SEEN[-1]
     assert req["crs"] == "EPSG:32717" and int(req["width"]) <= 512 and int(req["height"]) <= 512
     assert img.array.shape == (int(req["height"]), int(req["width"]), 3)
@@ -161,11 +164,18 @@ def test_get_map_is_georeferenced_and_requests_a_small_image(server, tmp_path):
 
 def test_get_map_axis_order_for_wms_130_geographic(server):
     SEEN.clear()
-    ogc.wms_get_map(server + "/wms", "only4326", QUITO_BBOX, ["EPSG:4326"], policy=POL_BIG)
+    ogc.wms_get_map(server + "/wms", "only4326", QUITO_BBOX, ["EPSG:4326"], policy=POL_BIG, tile_size=None)
     minlat, minlon, maxlat, maxlon = map(float, SEEN[-1]["bbox"].split(","))
     assert minlat == pytest.approx(QUITO_BBOX[1]) and minlon == pytest.approx(QUITO_BBOX[0])  # lat,lon order
+    SEEN.clear()  # tiled: every tile keeps the lat,lon order and together they cover the same box
+    ogc.wms_get_map(server + "/wms", "only4326", QUITO_BBOX, ["EPSG:4326"], policy=POL_BIG)
+    tiles = [tuple(map(float, r["bbox"].split(","))) for r in SEEN if r.get("layers") == "only4326"]
+    assert len(tiles) == 4
+    assert min(t[0] for t in tiles) == pytest.approx(QUITO_BBOX[1]) and max(t[2] for t in tiles) == pytest.approx(QUITO_BBOX[3])
+    assert min(t[1] for t in tiles) == pytest.approx(QUITO_BBOX[0]) and max(t[3] for t in tiles) == pytest.approx(QUITO_BBOX[2])
+    assert all(t[0] < t[2] and t[1] < t[3] for t in tiles)
     SEEN.clear()
-    ogc.wms_get_map(server + "/wms", "only4326", QUITO_BBOX, ["EPSG:4326"], version="1.1.1", policy=POL_BIG)
+    ogc.wms_get_map(server + "/wms", "only4326", QUITO_BBOX, ["EPSG:4326"], version="1.1.1", policy=POL_BIG, tile_size=None)
     minx, miny, *_ = map(float, SEEN[-1]["bbox"].split(","))
     assert minx == pytest.approx(QUITO_BBOX[0]) and SEEN[-1]["srs"] == "EPSG:4326"  # x,y order in 1.1.1
 
@@ -194,7 +204,7 @@ def test_reference_from_geojson_requires_crs():
 
 
 def test_wms_image_plus_wfs_reference_end_to_end(server, tmp_path):
-    img = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:32717"], policy=POL_BIG)
+    img = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:32717"], policy=POL_BIG, tile_size=None)
     tif = ogc.write_geotiff(img, str(tmp_path / "w.tif"))
     # reference square centred exactly on the bright roof of the stub image
     r0, c0, r1, c1 = ROOF_PX[1], ROOF_PX[0], ROOF_PX[3], ROOF_PX[2]
@@ -261,7 +271,7 @@ def test_crs_chain_prefers_web_mercator_then_others():
 
 def test_get_map_falls_back_to_next_crs_when_the_service_fails(server):
     SEEN.clear()
-    img = ogc.wms_get_map(server + "/wms", "flaky", QUITO_BBOX, ["EPSG:3857", "EPSG:32717"], policy=POL_BIG)
+    img = ogc.wms_get_map(server + "/wms", "flaky", QUITO_BBOX, ["EPSG:3857", "EPSG:32717"], policy=POL_BIG, tile_size=None)
     assert img.crs == "EPSG:32717"
     assert [a["crs"] for a in img.meta["attempts"]] == ["EPSG:3857", "EPSG:32717"]
     assert img.meta["attempts"][0]["ok"] is False and "NullPointerException" in img.meta["attempts"][0]["error"]
@@ -288,7 +298,7 @@ def test_web_mercator_image_is_georeferenced_and_measured_in_true_metres(server,
     from quito_building_lab.crs_utils import is_metric, metric_crs_for
     from quito_building_lab.raster_io import inspect_raster
 
-    img = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:3857"], policy=POL_BIG)
+    img = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:3857"], policy=POL_BIG, tile_size=None)
     assert img.crs == "EPSG:3857"
     info = inspect_raster(ogc.write_geotiff(img, str(tmp_path / "m.tif")))
     assert info.gsd_m == pytest.approx(img.meta["approx_gsd_m"], rel=0.02)
@@ -308,7 +318,7 @@ def test_web_mercator_image_gives_true_metre_areas_through_the_pipeline(server, 
     # roof = 60x60 px of the stub image; its true area must be (60 * gsd)^2 whatever CRS was requested
     bbox = (-78.5002, -0.001, -78.4992, 0.0)  # just south of the equator (UTM 17S)
     for crs in ("EPSG:3857", "EPSG:32717"):
-        img = ogc.wms_get_map(server + "/wms", "ortho", bbox, [crs], policy=POL_BIG)
+        img = ogc.wms_get_map(server + "/wms", "ortho", bbox, [crs], policy=POL_BIG, tile_size=None)
         tif = ogc.write_geotiff(img, str(tmp_path / f"{crs.replace(':', '_')}.tif"))
         cfg = PipelineConfig()
         cfg.tiling.target_gsd = None
@@ -318,3 +328,51 @@ def test_web_mercator_image_gives_true_metre_areas_through_the_pipeline(server, 
         assert len(out.candidates) == 1 and out.candidates.crs == "EPSG:32717"
         expected = (60 * img.meta["approx_gsd_m"]) ** 2
         assert out.candidates.geoms[0].area == pytest.approx(expected, rel=0.08), crs
+
+
+def test_default_request_is_made_of_256px_tiles_like_a_web_map(server):
+    SEEN.clear()
+    img = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:3857"], policy=POL_BIG)
+    reqs = [r for r in SEEN if r.get("layers") == "ortho" and r.get("request") == "GetMap"]
+    assert len(reqs) == img.meta["tiles"] == 4 and img.array.shape == (512, 512, 3)
+    assert {(r["width"], r["height"]) for r in reqs} == {("256", "256")}
+    # tiles are contiguous: each one starts where the previous ends, and together they span the whole bbox
+    boxes = sorted(tuple(map(float, r["bbox"].split(","))) for r in reqs)
+    xs = sorted({round(b[0], 3) for b in boxes} | {round(b[2], 3) for b in boxes})
+    assert len(xs) == 3 and xs[0] == pytest.approx(img.bbox[0], abs=1e-3) and xs[-1] == pytest.approx(img.bbox[2], abs=1e-3)
+    assert img.transform * (0, 0) == pytest.approx((img.bbox[0], img.bbox[3]))
+    assert img.meta["approx_gsd_m"] < 0.35
+
+
+def test_small_area_is_a_single_256px_request(server):
+    SEEN.clear()
+    tiny = (-78.50010, -0.18010, -78.49995, -0.17995)  # about 17 m
+    img = ogc.wms_get_map(server + "/wms", "ortho", tiny, ["EPSG:3857"], policy=POL_BIG)
+    assert img.meta["tiles"] == 1 and img.array.shape == (256, 256, 3)
+    assert len([r for r in SEEN if r.get("layers") == "ortho" and r.get("request") == "GetMap"]) == 1
+
+
+def test_service_that_only_accepts_256px_requests_works_in_tile_mode_but_not_single_mode(server):
+    img = ogc.wms_get_map(server + "/wms", "tileonly", QUITO_BBOX, ["EPSG:3857"], policy=POL_BIG)
+    assert img.array.shape == (512, 512, 3)
+    with pytest.raises(ogc.OGCServiceError, match="NullPointerException"):
+        ogc.wms_get_map(server + "/wms", "tileonly", QUITO_BBOX, ["EPSG:3857"], policy=POL_BIG, tile_size=None)
+
+
+def test_tile_mode_failure_costs_one_request_per_crs(server):
+    SEEN.clear()
+    with pytest.raises(ogc.OGCServiceError) as exc:
+        ogc.wms_get_map(server + "/wms", "alwaysfail", QUITO_BBOX, ["EPSG:3857", "EPSG:32717", "EPSG:4326"], policy=POL_BIG)
+    assert len([r for r in SEEN if r.get("layers") == "alwaysfail"]) == 3  # not 4 tiles x 3 CRS
+    assert [a["requests"] for a in exc.value.attempts] == [1, 1, 1]
+
+
+def test_probe_reports_which_request_shapes_the_service_accepts(server):
+    SEEN.clear()
+    res = ogc.wms_probe(server + "/wms", "tileonly", QUITO_BBOX, ["EPSG:3857", "EPSG:32717"], policy=POL_BIG)
+    assert len(res) <= 5 and len([r for r in SEEN if r.get("layers") == "tileonly"]) == len(res)
+    by = {r["variant"].split(",")[0].split(" (")[0]: r["ok"] for r in res}
+    assert any(r["ok"] for r in res if r["variant"].startswith("256")) and not by["512×512"]
+    assert all("tileonly" in r["url"] for r in res)
+    bad = ogc.wms_probe(server + "/wms", "alwaysfail", QUITO_BBOX, ["EPSG:3857"], policy=POL_BIG)
+    assert not any(r["ok"] for r in bad) and all("NullPointerException" in r["detail"] for r in bad)

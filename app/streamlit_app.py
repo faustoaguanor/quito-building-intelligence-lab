@@ -308,6 +308,7 @@ def tab_map():
                                                   max_zoom=MAX_ZOOM).add_to(base)
             except Exception:  # noqa: BLE001 - overlay is a convenience only
                 pass
+        st.session_state.pop("probe", None)
         st.session_state.update(map_key=map_key, base_map=base, map_ver=st.session_state.get("map_ver", 0) + 1,
                                 click_seen=None)
         # small coverages (e.g. one drone flight): preselect its centre so a square is visible straight away
@@ -330,6 +331,9 @@ def tab_map():
         st.session_state["click_seen"] = click
         _set_center(click["lat"], click["lng"])
         st.rerun()
+    st.caption("🔍 Si la capa desaparece al **alejar** el mapa, acérquelo: muchos servicios solo dibujan la ortofoto a "
+               "escalas grandes (barra de escala de unos 100 m o menos). La línea azul marca dónde dice el servicio que "
+               "hay datos.")
     with st.expander("…o escriba las coordenadas del centro"):
         c = center or (-0.1807, -78.4678)
         lat_in = st.number_input("Latitud", value=float(c[0]), format="%.6f", key="lat_in")
@@ -352,6 +356,21 @@ def tab_map():
         st.warning("La capa no declara su cobertura: no se puede comprobar si el cuadrado tiene datos.")
     else:
         st.success(f"Área válida: {side:.0f} m de lado dentro de la cobertura de la capa.")
+
+    with st.expander("🔧 Diagnóstico del servicio (si la descarga falla)"):
+        st.caption("Hace hasta 5 peticiones de prueba, una a una, en el centro del cuadrado, cambiando el tamaño, la "
+                   "transparencia, el formato y el sistema de coordenadas, y le dice cuáles acepta el servidor. "
+                   "Úselo solo cuando la descarga falle.")
+        if st.button("Probar el servicio", disabled=problem is not None, key="probe_btn"):
+            try:
+                with st.spinner("Probando variantes de la petición…"):
+                    st.session_state["probe"] = ogc.wms_probe(wms_url, layer.name, bbox, layer.crs, caps.version)
+            except ogc.OGCError as exc:
+                st.session_state["probe"] = [{"variant": "No se pudo probar", "ok": False, "detail": str(exc), "url": ""}]
+        for r in st.session_state.get("probe", []):
+            st.markdown(f"{'✅' if r['ok'] else '❌'} **{r['variant']}** — {r['detail']}")
+            if r["url"]:
+                st.code(r["url"], language=None)
 
     if st.button("▶ Descargar área y ejecutar inferencia", type="primary", disabled=problem is not None):
         if not _JOB_LOCK.acquire(blocking=False):
