@@ -347,16 +347,34 @@ def tab_map():
     # The base map is built ONCE per (service, layer) and kept in session state. The selected square is
     # added client-side as a feature group and only clicks are reported back, so panning/zooming never
     # reruns the app or rebuilds the map (that caused the flicker and the vanishing layers).
-    map_key = (wms_url, layer.name if layer is not None else None, caps.version if caps else None)
+    native = None
+    if layer is not None:
+        native = st.slider(
+            "Detalle máximo del mapa (nivel de zoom que se pide al servidor)", 12, 21, layer.native_zoom(),
+            key=f"native_{wms_url}_{layer.name}",
+            help="Si la capa desaparece al acercar el mapa, baje este valor un nivel cada vez hasta que se mantenga: "
+                 "a partir de ese nivel el mapa amplía las imágenes en lugar de pedir más detalle al servidor (que "
+                 "en algunos servicios deja de dibujar). Solo afecta a la vista del mapa, no a la imagen descargada.")
+    layer_key = (wms_url, layer.name if layer is not None else None, caps.version if caps else None)
+    map_key = layer_key + (native,)
     if st.session_state.get("map_key") != map_key:
-        base = folium.Map(location=DEFAULT_VIEW[:2], zoom_start=DEFAULT_VIEW[2], control_scale=True,
-                          tiles=None, max_zoom=MAX_ZOOM)
+        new_layer = st.session_state.get("layer_key") != layer_key
+        if new_layer:
+            st.session_state.pop("probe", None)
+            st.session_state.pop("auto_fail", None)
+            # small coverages (e.g. one drone flight): preselect its centre so a square is visible straight away
+            st.session_state["center"] = _default_center(extent)
+        keep = st.session_state.get("center")
+        # same layer, only the map detail changed: stay on the user's square instead of re-framing the coverage
+        start = (keep[0], keep[1], 17) if (not new_layer and keep) else DEFAULT_VIEW
+        base = folium.Map(location=start[:2], zoom_start=start[2], control_scale=True, tiles=None, max_zoom=MAX_ZOOM)
         folium.TileLayer("OpenStreetMap", name="Mapa base", max_zoom=MAX_ZOOM, max_native_zoom=19).add_to(base)
         if extent:
             w, s_, e, n = extent
             folium.Rectangle([[s_, w], [n, e]], color="#1f77ff", weight=2, fill=False, dash_array="6",
                              interactive=False).add_to(base)  # not interactive: clicks must reach the map
-            base.fit_bounds([[s_, w], [n, e]])
+            if new_layer or not keep:
+                base.fit_bounds([[s_, w], [n, e]])
         if layer is not None and caps is not None:
             try:
                 folium.raster_layers.WmsTileLayer(url=wms_url, layers=layer.name, fmt="image/png", transparent=True,
@@ -364,14 +382,11 @@ def tab_map():
                                                   max_zoom=MAX_ZOOM,
                                                   # beyond this level, enlarge the last tiles instead of asking the
                                                   # server for detail it does not draw (the layer vanished there)
-                                                  max_native_zoom=layer.native_zoom()).add_to(base)
+                                                  max_native_zoom=native).add_to(base)
             except Exception:  # noqa: BLE001 - overlay is a convenience only
                 pass
-        st.session_state.pop("probe", None)
-        st.session_state.update(map_key=map_key, base_map=base, map_ver=st.session_state.get("map_ver", 0) + 1,
-                                click_seen=None)
-        # small coverages (e.g. one drone flight): preselect its centre so a square is visible straight away
-        st.session_state["center"] = _default_center(extent)
+        st.session_state.update(map_key=map_key, layer_key=layer_key, base_map=base,
+                                map_ver=st.session_state.get("map_ver", 0) + 1, click_seen=None)
     center = st.session_state.get("center")
     bbox = None
     group = folium.FeatureGroup(name="Área seleccionada")
@@ -390,9 +405,9 @@ def tab_map():
         st.session_state["click_seen"] = click
         _set_center(click["lat"], click["lng"])
         st.rerun()
-    st.caption("🔍 Si la capa desaparece al **alejar** el mapa, acérquelo: muchos servicios solo dibujan la ortofoto a "
-               "escalas grandes (barra de escala de unos 100 m o menos). La línea azul marca dónde dice el servicio que "
-               "hay datos.")
+    st.caption("🔍 Si la capa desaparece al **acercar**, baje **Detalle máximo del mapa** (encima del mapa) un nivel cada "
+               "vez. Si desaparece al **alejar**, acérquese: muchos servicios solo dibujan la ortofoto a escalas grandes. "
+               "La línea azul marca dónde dice el servicio que hay datos.")
     with st.expander("…o escriba las coordenadas del centro"):
         c = center or (-0.1807, -78.4678)
         lat_in = st.number_input("Latitud", value=float(c[0]), format="%.6f", key="lat_in")
@@ -416,7 +431,20 @@ def tab_map():
     else:
         st.success(f"Área válida: {side:.0f} m de lado dentro de la cobertura de la capa.")
 
-    with st.expander("🌐 Descargar la imagen con su navegador (si la descarga automática falla)"):
+    fail = st.session_state.get("auto_fail")
+    if fail and fail.get("key") == st.session_state.get("layer_key"):
+        st.error(f"La descarga automática falló: {fail['msg']}")
+        st.warning("**Este servicio no responde a la descarga automática de la app**, aunque sí a su navegador (por "
+                   "eso ve la capa en el mapa). Use el panel **🌐 Descargar la imagen con su navegador**, abierto aquí "
+                   "abajo: abra la imagen, guárdela y súbala.")
+        if fail.get("attempts"):
+            with st.expander("Detalles técnicos de la descarga automática"):
+                for a in fail["attempts"]:
+                    st.markdown(f"**{a['crs']}** — {'✅ ok' if a['ok'] else '❌ ' + a.get('error', '')}")
+                    st.code(a["url"], language=None)
+    else:
+        fail = None
+    with st.expander("🌐 Descargar la imagen con su navegador (si la descarga automática falla)", expanded=bool(fail)):
         st.caption("Algunos servicios responden a su navegador (por eso ve la capa en el mapa) pero no al servidor de "
                    "esta app. En ese caso descargue usted la imagen del cuadrado y súbala: la app la georreferencia con "
                    "el mismo recuadro y sistema de coordenadas que pidió. Compruebe las condiciones de uso del servicio.")
@@ -471,6 +499,7 @@ def tab_map():
             if r["url"]:
                 st.code(r["url"], language=None)
 
+    rerun_needed = False
     if st.button("▶ Descargar área y ejecutar inferencia", type="primary", disabled=problem is not None):
         if not _JOB_LOCK.acquire(blocking=False):
             st.warning("Hay otra inferencia en curso. Intente de nuevo en unos segundos.")
@@ -484,20 +513,22 @@ def tab_map():
             try:
                 with st.spinner("Pidiendo la imagen al WMS (una sola petición)…"):
                     img = ogc.wms_get_map(wms_url, layer.name, bbox, layer.crs, caps.version, adv_gsd)
+            except ogc.OGCServiceError as exc:
+                # the service answered with an error: remember it for this service/layer and reopen the page with
+                # the browser-download panel expanded (the lock is released by ``finally`` before the rerun)
+                st.session_state["auto_fail"] = {"key": st.session_state.get("layer_key"), "msg": str(exc),
+                                                 "attempts": getattr(exc, "attempts", None)}
+                rerun_needed = True
+                return
             except (ogc.OGCError, ValueError) as exc:
                 st.error(f"No se pudo obtener la imagen: {exc}")
-                attempts = getattr(exc, "attempts", None)
-                if attempts:
-                    st.caption("El servicio rechazó la petición con cada sistema de coordenadas disponible (hasta 3 "
-                               "intentos). El error viene del servidor del WMS, no de la app: pruebe otra capa u otra zona.")
-                    with st.expander("Detalles técnicos (para reproducirlo en el navegador)"):
-                        for a in attempts:
-                            st.markdown(f"**{a['crs']}** — {'✅ ok' if a['ok'] else '❌ ' + a.get('error', '')}")
-                            st.code(a["url"], language=None)
                 return
+            st.session_state.pop("auto_fail", None)
             _process_and_show(img, predictor, adv_thr, adv_min_area, adv_prob, "WMS descargada")
         finally:
             _JOB_LOCK.release()
+            if rerun_needed:
+                st.rerun()
 
 
 tabs = st.tabs(["Imagen propia", "Mapa WMS (cualquier servicio)"])
