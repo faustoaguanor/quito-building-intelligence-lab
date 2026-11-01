@@ -376,3 +376,36 @@ def test_probe_reports_which_request_shapes_the_service_accepts(server):
     assert all("tileonly" in r["url"] for r in res)
     bad = ogc.wms_probe(server + "/wms", "alwaysfail", QUITO_BBOX, ["EPSG:3857"], policy=POL_BIG)
     assert not any(r["ok"] for r in bad) and all("NullPointerException" in r["detail"] for r in bad)
+
+
+def test_browser_request_and_upload_round_trip(server):
+    req = ogc.browser_getmap_request(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:4326", "EPSG:3857"])
+    # longer side 256 px; the other keeps the ground aspect (this test box is 111.3 x 110.6 m, not square)
+    assert req["crs"] == "EPSG:3857" and (req["width"], req["height"]) == (256, 254)
+    q = {k.lower(): v[0] for k, v in parse_qs(urlparse(req["url"]).query).items()}
+    assert q["request"] == "GetMap" and q["width"] == "256" and q["crs"] == "EPSG:3857" and q["layers"] == "ortho"
+    # what the user's browser would save: the bytes the service returns for that exact URL
+    import urllib.request
+
+    body = urllib.request.urlopen(req["url"], timeout=5).read()
+    img = ogc.geoimage_from_bytes(body, req)
+    assert img.array.shape == (254, 256, 3) and img.crs == "EPSG:3857"
+    assert img.transform * (0, 0) == pytest.approx((req["bbox"][0], req["bbox"][3]))
+    assert img.transform * (256, 254) == pytest.approx((req["bbox"][2], req["bbox"][1]))
+    assert img.meta["downloaded_by"] == "user's browser"
+
+
+def test_square_area_gives_a_square_browser_request():
+    lat, lon, half = -0.18, -78.5, 75.0
+    dlat, dlon = half / 110_574.0, half / (111_320.0 * __import__("math").cos(__import__("math").radians(lat)))
+    req = ogc.browser_getmap_request("https://example.org/wms", "x", (lon - dlon, lat - dlat, lon + dlon, lat + dlat),
+                                     ["EPSG:3857"])
+    assert (req["width"], req["height"]) == (256, 256) and req["approx_gsd_m"] == pytest.approx(150 / 256, abs=0.01)
+
+
+def test_uploaded_image_of_another_size_is_rejected():
+    req = ogc.browser_getmap_request("https://example.org/wms", "x", QUITO_BBOX, ["EPSG:3857"])
+    buf = io.BytesIO()
+    Image.new("RGB", (300, 256), (90, 90, 90)).save(buf, "PNG")
+    with pytest.raises(ogc.OGCError, match="300x256"):
+        ogc.geoimage_from_bytes(buf.getvalue(), req)
