@@ -49,7 +49,7 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLE = ROOT / "examples" / "demo" / "vegas_sn2_img10_rgb8.png"
 _JOB_LOCK = threading.Lock()  # one inference job at a time per server process
 
-st.set_page_config(page_title="Quito Building Intelligence Lab", page_icon="🏘️", layout="wide")
+st.set_page_config(page_title="Building Footprint Lab", page_icon="🏘️", layout="wide")
 
 
 @st.cache_resource(show_spinner="Cargando modelo ONNX…")
@@ -92,7 +92,7 @@ def png_bytes(im: Image.Image) -> bytes:
 
 
 spec = get_spec(MODEL_ID)
-st.title("🏘️ Quito Building Intelligence Lab")
+st.title("🏘️ Building Footprint Lab")
 st.caption("Extracción asistida por IA de huellas de edificios y evaluación de calidad catastral — demostración de inferencia en CPU")
 
 with st.expander("¿Qué hace esta demo?", expanded=True):
@@ -384,10 +384,11 @@ with tabs[1]:
 st.divider()
 with st.expander("Limitaciones y atribución"):
     st.markdown(
-        "- Modelo entrenado con SpaceNet-4 (Atlanta, WorldView-2). **No se ha validado con etiquetas revisadas de Quito.** "
-        "Imágenes con resolución muy distinta a ~0,5 m/píxel pueden rendir peor.\n"
+        "- Modelo entrenado con SpaceNet-4 (Atlanta, WorldView-2). **No se ha validado con etiquetas revisadas de su zona de estudio.** "
+        "Imágenes con resolución muy distinta a ~0,5 m/píxel pueden rendir peor, y también las zonas con arquitectura, techos o "
+        "vegetación distintos a los de entrenamiento (p. ej. la costa).\n"
         "- Los resultados son **candidatos** para revisión humana; no son límites catastrales ni prueba de errores o construcciones no registradas.\n"
         f"- {spec.license_note}\n- Imagen de ejemplo: recorte de SpaceNet-2 (Las Vegas), CC BY-SA 4.0.\n"
-        "- Proyecto independiente: no implica respaldo del Municipio de Quito, Streamlit u otros proveedores.\n"
+        "- Proyecto independiente: no implica respaldo de Streamlit, de los titulares de los servicios WMS ni de los proveedores del modelo.\n"
         "- Código MIT © 2026 faustoaguanor."
     )
