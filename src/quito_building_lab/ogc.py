@@ -274,6 +274,52 @@ def image_size_for(bbox_m: tuple[float, float, float, float], target_gsd: float,
     return max(32, round(w_m * scale)), max(32, round(h_m * scale)), longer / side
 
 
+TILE_PX = 256  # what web maps request; some services fail on other request sizes
+
+
+def _decode_image(body: bytes) -> tuple[np.ndarray, bool]:
+    """Decode PNG/JPEG bytes into (4 x H x W uint8 array, had_alpha); alpha is 255 when the image has none."""
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # PNG/JPEG have no geotransform: expected, we georeference from bbox
+            with MemoryFile(body) as mf, mf.open() as src:
+                data = src.read()
+    except Exception as exc:  # noqa: BLE001 - GDAL raises various errors
+        raise OGCError("The returned image could not be decoded.") from exc
+    had_alpha = data.shape[0] >= 4
+    if data.shape[0] < 3:
+        data = np.repeat(data[:1], 3, axis=0)
+    out = np.full((4, data.shape[1], data.shape[2]), 255, np.uint8)
+    out[:3] = data[:3]
+    if had_alpha:
+        out[3] = data[3]
+    return out, had_alpha
+
+
+def _getmap_params(layer, bbox, crs_code, version, width, height, fmt, styles, transparent=True) -> dict:
+    crs = CRS.from_user_input(crs_code)
+    bb = (bbox[1], bbox[0], bbox[3], bbox[2]) if _swap_axes(crs, version, crs_code) else bbox
+    return {
+        "service": "WMS", "version": version, "request": "GetMap", "layers": layer, "styles": styles,
+        "bbox": ",".join(f"{v:.8f}".rstrip("0").rstrip(".") for v in bb),
+        "width": width, "height": height, "format": fmt, "transparent": "true" if transparent else "false",
+        ("crs" if version == "1.3.0" else "srs"): crs_code,
+    }
+
+
+def _request_url(url: str, params: dict) -> str:
+    return url.rstrip("?&") + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+
+
+def _fetch_image(url: str, params: dict, policy: UrlPolicy):
+    """One GetMap request -> (4xHxW array, had_alpha). Service-side failures raise OGCServiceError."""
+    body, ctype = _get(url, params, policy)
+    if not ctype.lower().startswith("image/"):
+        _raise_if_exception(_parse_xml(body))
+        raise OGCServiceError("The service did not return an image.")
+    return _decode_image(body)
+
+
 def wms_get_map(
     url: str,
     layer: str,
@@ -285,59 +331,113 @@ def wms_get_map(
     styles: str = "",
     max_side: int = 512,
     policy: UrlPolicy | None = None,
+    tile_size: int | None = TILE_PX,
 ) -> GeoImage:
-    """One GetMap request for a small area; georeferenced from the requested bbox + CRS."""
+    """Fetch a small area, georeferenced from the requested bbox + CRS.
+
+    With ``tile_size`` (default 256) the area is requested as a few ``tile_size`` x ``tile_size`` GetMap tiles,
+    exactly the request shape web maps use, and stitched (at most 4 requests for 512 px). ``tile_size=None``
+    asks for the whole area in a single request. If a CRS fails, the next one is tried (at most 3 CRS); a CRS
+    that fails on its first tile costs a single request.
+    """
     policy = policy or UrlPolicy()
     # ground size in metres from the lon/lat box (independent of the request CRS, e.g. Web Mercator)
     lat = (bbox_lonlat[1] + bbox_lonlat[3]) / 2
     bbox_m = (0.0, 0.0, (bbox_lonlat[2] - bbox_lonlat[0]) * 111_320 * math.cos(math.radians(lat)),
               (bbox_lonlat[3] - bbox_lonlat[1]) * 110_574)
-    width, height, gsd = image_size_for(bbox_m, target_gsd, max_side)
+    width, height, _ = image_size_for(bbox_m, target_gsd, max_side)
+    if tile_size:
+        nx, ny = math.ceil(width / tile_size), math.ceil(height / tile_size)
+        tw = th = tile_size
+    else:
+        nx = ny = 1
+        tw, th = width, height
+    W, H = nx * tw, ny * th
+    gsd = max(bbox_m[2], bbox_m[3]) / max(W, H)
     attempts: list[dict] = []
-    body = ctype = crs_code = bbox = None
+    mosaic = None
+    had_alpha = False
+    crs_code = bbox = None
     for crs_code in choose_crs_chain(layer_crs or []):
-        crs = CRS.from_user_input(crs_code)
         bbox = bbox_lonlat_to_crs(bbox_lonlat, crs_code)
-        bb = (bbox[1], bbox[0], bbox[3], bbox[2]) if _swap_axes(crs, version, crs_code) else bbox
-        params = {
-            "service": "WMS", "version": version, "request": "GetMap", "layers": layer, "styles": styles,
-            "bbox": ",".join(f"{v:.8f}".rstrip("0").rstrip(".") for v in bb),
-            "width": width, "height": height, "format": fmt, "transparent": "true",
-            ("crs" if version == "1.3.0" else "srs"): crs_code,
-        }
-        request_url = url.rstrip("?&") + ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
+        x0, y0, x1, y1 = bbox
+        canvas = np.zeros((4, H, W), np.uint8)
+        alpha_seen = False
+        first_url = last_url = None
         try:
-            body, ctype = _get(url, params, policy)
-            if not ctype.lower().startswith("image/"):
-                _raise_if_exception(_parse_xml(body))
-                raise OGCServiceError("The service did not return an image.")
-            attempts.append({"crs": crs_code, "ok": True, "url": request_url})
+            for j in range(ny):
+                for i in range(nx):
+                    tb = (x0 + (x1 - x0) * i / nx, y1 - (y1 - y0) * (j + 1) / ny,
+                          x0 + (x1 - x0) * (i + 1) / nx, y1 - (y1 - y0) * j / ny)
+                    params = _getmap_params(layer, tb, crs_code, version, tw, th, fmt, styles)
+                    first_url = first_url or _request_url(url, params)
+                    last_url = _request_url(url, params)
+                    tile, a = _fetch_image(url, params, policy)
+                    if tile.shape[1:] != (th, tw):
+                        raise OGCServiceError(f"The service returned a {tile.shape[2]}x{tile.shape[1]} image "
+                                              f"instead of the requested {tw}x{th}.")
+                    canvas[:, j * th:(j + 1) * th, i * tw:(i + 1) * tw] = tile
+                    alpha_seen |= a
+            attempts.append({"crs": crs_code, "ok": True, "url": first_url, "requests": nx * ny})
+            mosaic, had_alpha = canvas, alpha_seen
             break
         except OGCServiceError as exc:
-            attempts.append({"crs": crs_code, "ok": False, "error": str(exc), "url": request_url})
-            body = None
-    if body is None:
+            attempts.append({"crs": crs_code, "ok": False, "error": str(exc), "url": last_url, "requests": 1})
+    if mosaic is None:
         raise OGCServiceError(attempts[-1]["error"] + f" (tried {', '.join(a['crs'] for a in attempts)})", attempts)
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")  # PNG/JPEG have no geotransform: expected, we georeference from bbox
-            with MemoryFile(body) as mf, mf.open() as src:
-                data = src.read()
-    except Exception as exc:  # noqa: BLE001 - GDAL raises various errors
-        raise OGCError("The returned image could not be decoded.") from exc
-    if data.shape[0] < 3:
-        data = np.repeat(data[:1], 3, axis=0)
-    rgb = np.moveaxis(data[:3], 0, -1).astype(np.uint8)
+    rgb = np.moveaxis(mosaic[:3], 0, -1)
     # alpha band (transparent = no data) when present, otherwise all-black pixels count as no data
-    valid = data[3] > 0 if data.shape[0] >= 4 else rgb.any(axis=2)
-    h, w = rgb.shape[:2]
+    valid = mosaic[3] > 0 if had_alpha else rgb.any(axis=2)
     return GeoImage(
-        rgb, valid, from_bounds(*bbox, w, h), crs_code, bbox,
-        {"service_url": url, "layer": layer, "version": version, "request_crs": crs_code, "size_px": [w, h],
-         "had_alpha": bool(data.shape[0] >= 4), "attempts": attempts,
+        rgb, valid, from_bounds(*bbox, W, H), crs_code, bbox,
+        {"service_url": url, "layer": layer, "version": version, "request_crs": crs_code, "size_px": [W, H],
+         "had_alpha": bool(had_alpha), "attempts": attempts, "tiles": nx * ny, "tile_px": tile_size,
          "approx_gsd_m": round(gsd, 3), "format": fmt,
          "note": "Rendered WMS image; not original orthophoto pixels. GSD is the request grid, not the source GSD."},
     )
+
+
+def wms_probe(
+    url: str,
+    layer: str,
+    bbox_lonlat: tuple[float, float, float, float],
+    layer_crs: list[str] | None = None,
+    version: str = "1.3.0",
+    policy: UrlPolicy | None = None,
+) -> list[dict]:
+    """Diagnose a failing service: at most 5 single GetMap requests that vary one thing at a time
+    (tile size, transparency, format, CRS) around the centre of ``bbox_lonlat``. Run on explicit request only."""
+    policy = policy or UrlPolicy()
+    chain = choose_crs_chain(layer_crs or [])
+    lon, lat = (bbox_lonlat[0] + bbox_lonlat[2]) / 2, (bbox_lonlat[1] + bbox_lonlat[3]) / 2
+    half = 38.0  # metres -> about 256 px at 0.3 m/px
+    dlat, dlon = half / 110_574.0, half / (111_320.0 * math.cos(math.radians(lat)))
+    small = (lon - dlon, lat - dlat, lon + dlon, lat + dlat)
+    first = chain[0]
+    variants = [
+        ("256×256 como el navegador (PNG transparente)", first, 256, "image/png", True),
+        ("256×256, PNG sin transparencia", first, 256, "image/png", False),
+        ("256×256, JPEG", first, 256, "image/jpeg", False),
+        ("512×512, PNG transparente", first, 512, "image/png", True),
+    ]
+    if len(chain) > 1:
+        variants.append((f"256×256 en {chain[1]}", chain[1], 256, "image/png", True))
+    results = []
+    for name, crs_code, size, fmt, transparent in variants:
+        bbox = bbox_lonlat_to_crs(small, crs_code)
+        if size == 512:  # same ground size at twice the pixels is not what we want: use twice the ground span
+            cx, cy = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+            hw, hh = (bbox[2] - bbox[0]), (bbox[3] - bbox[1])
+            bbox = (cx - hw, cy - hh, cx + hw, cy + hh)
+        params = _getmap_params(layer, bbox, crs_code, version, size, size, fmt, "", transparent)
+        item = {"variant": name, "url": _request_url(url, params)}
+        try:
+            _fetch_image(url, params, policy)
+            item.update(ok=True, detail="imagen recibida")
+        except OGCServiceError as exc:
+            item.update(ok=False, detail=str(exc))
+        results.append(item)
+    return results
 
 
 def blank_reason(img: GeoImage) -> str | None:
