@@ -72,6 +72,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.reply(WMS_CAPS, "text/xml")
             elif q.get("layers") == "missing":
                 self.reply(EXC, "text/xml")
+            elif q.get("layers") == "blank":
+                buf = io.BytesIO()
+                Image.new("RGBA", (int(q["width"]), int(q["height"])), (0, 0, 0, 0)).save(buf, "PNG")
+                self.reply(buf.getvalue(), "image/png")
+            elif q.get("layers") == "white":
+                buf = io.BytesIO()
+                Image.new("RGB", (int(q["width"]), int(q["height"])), (255, 255, 255)).save(buf, "PNG")
+                self.reply(buf.getvalue(), "image/png")
             else:
                 self.reply(make_png(int(q["width"]), int(q["height"])), "image/png")
         elif u.path == "/wfs":
@@ -215,3 +223,19 @@ def test_cli_fetch_area_then_run(server, tmp_path, monkeypatch, capsys):
     assert gpd.read_file(tmp_path / "a" / "reference.geojson").crs.to_epsg() == 32717
     assert cli.main(["fetch-area", "--wms-url", server + "/wms", "--layer", "nope", "--bbox",
                      *map(str, QUITO_BBOX), "--out", str(tmp_path / "b")]) == 2
+
+
+def test_blank_images_are_explained(server):
+    ok = ogc.wms_get_map(server + "/wms", "ortho", QUITO_BBOX, ["EPSG:32717"], policy=POL_BIG)
+    assert ogc.blank_reason(ok) is None
+    blank = ogc.wms_get_map(server + "/wms", "blank", QUITO_BBOX, ["EPSG:32717"], policy=POL_BIG)
+    assert ogc.blank_reason(blank) == "totalmente transparente"
+    white = ogc.wms_get_map(server + "/wms", "white", QUITO_BBOX, ["EPSG:32717"], policy=POL_BIG)
+    assert ogc.blank_reason(white) == "casi toda blanca"
+
+
+def test_bbox_intersects():
+    layer = (-78.6, -0.3, -78.4, -0.1)
+    assert ogc.bbox_intersects(QUITO_BBOX, layer)
+    assert not ogc.bbox_intersects((-80.0, -2.0, -79.9, -1.9), layer)
+    assert ogc.bbox_intersects((-78.41, -0.2, -78.3, -0.1), layer)  # partial overlap counts

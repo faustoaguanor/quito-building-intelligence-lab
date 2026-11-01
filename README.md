@@ -22,7 +22,7 @@ One reusable Python engine, three delivery targets:
 - Real inference on PyTorch and ONNX Runtime (max probability difference 3.2e-8, mask agreement 100 %).
 - Windowed raster reading, resampling to a target GSD, overlap blending, NoData handling, bounded-memory vectorisation.
 - Cadastral import (GeoJSON/GeoPackage), many-to-many matching, IoU/coverage/area differences, ISO 19157-organised report.
-- WMS/WFS area picker (Streamlit map + CLI) — tested only against a simulated service; the real Quito services are unverified.
+- WMS area picker (Streamlit map tab + CLI): any https WMS, click-to-centre with enforced size limits and a coverage check — tested only against a simulated service; real services are unverified.
 - Exports: GeoJSON (RFC 7946, WGS 84), GeoPackage (metric CRS), GeoTIFF masks, JSON/Markdown reports.
 - 50 deterministic tests (`pytest`), ruff lint, CI and Pages workflows.
 

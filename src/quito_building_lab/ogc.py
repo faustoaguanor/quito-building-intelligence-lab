@@ -29,15 +29,9 @@ from rasterio.transform import Affine, from_bounds
 
 USER_AGENT = "quito-building-lab/0.1 (+https://github.com/faustoaguanor/quito-building-intelligence-lab)"
 
-# Candidate services (from the project brief). NOT verified: layers, permissions and redistribution
-# terms must be checked with the data owner.
-CANDIDATE_WMS = {
-    "Quito · usigc (ortofotos, candidato)": "https://geocatastro.quito.gob.ec:8443/geoserver/usigc/wms",
-    "Quito · dmot (ortofotos, candidato)": "https://geocatastro.quito.gob.ec:8443/geoserver/dmot/wms",
-    "Quito · sgpgeom (catastro, candidato)": "https://geomdmq.quito.gob.ec:8443/geoserver/sgpgeom/wms",
-}
-CANDIDATE_WFS = {
-    "Quito · sgpgeom (UC / bloques, candidato)": "https://geomdmq.quito.gob.ec:8443/geoserver/sgpgeom/wfs",
+# Example service supplied by a user (not verified by the maintainers). Any WMS URL can be used instead.
+EXAMPLE_WMS = {
+    "IGM Ecuador · ortofotos UAV (ejemplo)": "https://www.geoportaligm.gob.ec/orto/uav_igm/wms",
 }
 PREFERRED_CRS = ("EPSG:32717", "EPSG:3857", "EPSG:4326", "CRS:84")
 
@@ -290,9 +284,25 @@ def wms_get_map(
     return GeoImage(
         rgb, valid, from_bounds(*bbox, w, h), crs_code, bbox,
         {"service_url": url, "layer": layer, "version": version, "request_crs": crs_code, "size_px": [w, h],
+         "had_alpha": bool(data.shape[0] >= 4),
          "approx_gsd_m": round(gsd, 3), "format": fmt,
          "note": "Rendered WMS image; not original orthophoto pixels. GSD is the request grid, not the source GSD."},
     )
+
+
+def blank_reason(img: GeoImage) -> str | None:
+    """Why a returned image is useless (``None`` if it has content). Typical cause: area outside the layer."""
+    if not img.valid.any():
+        return "totalmente transparente" if img.meta.get("had_alpha") else "totalmente negra"
+    px = img.array[img.valid]
+    if (px == 255).all(axis=1).mean() > 0.98:
+        return "casi toda blanca"
+    return None
+
+
+def bbox_intersects(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:
+    """Overlap test for two lon/lat boxes (W, S, E, N)."""
+    return not (a[2] < b[0] or a[0] > b[2] or a[3] < b[1] or a[1] > b[3])
 
 
 def write_geotiff(img: GeoImage, path: str) -> str:
