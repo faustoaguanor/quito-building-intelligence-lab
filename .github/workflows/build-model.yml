@@ -1,0 +1,40 @@
+name: Build ONNX model
+# Manual workflow: downloads the original trusted weights (SHA-256 verified), exports ONNX,
+# validates it against PyTorch and publishes it as a GitHub Release asset for the Streamlit demo.
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+env:
+  TAG: model-onnx-v1
+  MODEL: xdxd_spacenet4_unet_vgg16
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12"}
+      - name: Install (CPU torch)
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[torch,onnx,export]"
+      - name: Download weights and export ONNX
+        run: |
+          qbl download-model --weights-dir weights
+          qbl export-onnx --weights-dir weights
+          cd weights
+          sha256sum "$MODEL.onnx" | cut -d' ' -f1 > "$MODEL.onnx.sha256"
+          cat "$MODEL.onnx.json"
+      - name: Publish release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd weights
+          NOTES="ONNX export of the third-party XD_XD SpaceNet-4 U-Net (VGG16). SHA-256: $(cat $MODEL.onnx.sha256). Source weights: see THIRD_PARTY_NOTICES.md."
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$MODEL.onnx" "$MODEL.onnx.sha256" --clobber
+          else
+            gh release create "$TAG" "$MODEL.onnx" "$MODEL.onnx.sha256" --title "ONNX model (third-party weights)" --notes "$NOTES"
+          fi
