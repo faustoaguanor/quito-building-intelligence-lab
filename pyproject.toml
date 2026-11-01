@@ -39,6 +39,7 @@ dev = ["pytest>=7.4", "ruff>=0.4", "pillow>=10"]
 
 [project.scripts]
 qbl = "quito_building_lab.cli:main"
+qbl-train = "quito_building_lab.training:main"
 
 [project.urls]
 Homepage = "https://faustoaguanor.github.io/quito-building-intelligence-lab/"

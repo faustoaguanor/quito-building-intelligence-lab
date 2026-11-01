@@ -1,0 +1,21 @@
+name: Pages
+on:
+  push: {branches: [main], paths: ["site/**", ".github/workflows/pages.yml"]}
+  workflow_dispatch:
+permissions: {contents: read, pages: write, id-token: write}
+concurrency: {group: pages, cancel-in-progress: true}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: {name: github-pages, url: "${{ steps.deployment.outputs.page_url }}"}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate static resources
+        run: |
+          test -f site/index.html && test -f site/style.css
+          for f in demo_input.png demo_probability.png demo_overlay.png demo_results.json; do test -f site/assets/$f; done
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with: {path: site}
+      - id: deployment
+        uses: actions/deploy-pages@v4

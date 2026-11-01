@@ -1,0 +1,22 @@
+# Example configuration. CLI flags override these values.
+inference:
+  model_id: xdxd_spacenet4_unet_vgg16
+  backend: auto          # auto | torch | onnx
+  device: cpu            # cpu | cuda | cuda:0 | auto
+  batch_size: 1
+  normalization: image_stats   # image_stats | spacenet_dn
+tiling:
+  tile_size: 512
+  overlap: 64
+  target_gsd: 0.3        # metres; resample high-resolution (e.g. 7 cm) drone orthophotos. null = native
+  max_pixels: 400000000
+postprocess:
+  threshold: 0.5
+  sieve_pixels: 20
+  min_area_m2: 8.0
+  simplify_tolerance: 0.5
+  fill_holes_smaller_than_m2: 4.0
+matching:
+  strong_iou: 0.5        # demonstration thresholds, NOT official cadastral tolerances
+  min_coverage: 0.1
+  reference_kind: construction   # construction | block | uc | reviewed_roofs | other

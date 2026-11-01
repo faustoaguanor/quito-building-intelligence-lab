@@ -1,0 +1,79 @@
+{
+  "segmentation": {
+    "processed_grid": "462x462",
+    "resample_factor": 1.1085,
+    "processed_gsd_m": 0.3,
+    "tiles": 1,
+    "raw_polygons": 17,
+    "candidates": 15,
+    "read_s": 0.01,
+    "inference_s": 1.67,
+    "total_s": 1.72
+  },
+  "correspondence": {
+    "matching_model": "many-to-many (connected components of the overlap graph)",
+    "thresholds": {
+      "strong_iou": 0.5,
+      "min_coverage": 0.1,
+      "note": "Demonstration parameters, not official cadastral tolerances."
+    },
+    "reference_kind": "construction",
+    "n_candidates": 15,
+    "n_references": 20,
+    "n_pairs": 14,
+    "candidates_by_class": {
+      "strong_correspondence": 9,
+      "partial_correspondence": 1,
+      "candidate_without_reference": 3,
+      "reference_without_candidate": 0,
+      "ambiguous_match": 2,
+      "not_evaluated": 0
+    },
+    "references_by_class": {
+      "strong_correspondence": 9,
+      "partial_correspondence": 1,
+      "candidate_without_reference": 0,
+      "reference_without_candidate": 6,
+      "ambiguous_match": 4,
+      "not_evaluated": 0
+    },
+    "candidate_area_m2": 4471.04,
+    "reference_area_m2": 4534.28,
+    "overlap_area_m2": 3615.92,
+    "area_iou": 0.6709,
+    "reference_area_covered_pct": 79.75,
+    "crs": "EPSG:32611"
+  },
+  "detection_metrics": {
+    "iou_threshold": 0.5,
+    "n_predictions": 15,
+    "n_reference": 20,
+    "true_positives": 10,
+    "false_positives": 5,
+    "false_negatives": 10,
+    "precision": 0.6667,
+    "recall": 0.5,
+    "f1": 0.5714,
+    "mean_iou_matched": 0.7169,
+    "area_iou": 0.6709,
+    "area_precision": 0.8087,
+    "area_recall": 0.7975,
+    "units": "m2"
+  },
+  "provenance": {
+    "model": {
+      "model_id": "xdxd_spacenet4_unet_vgg16",
+      "name": "XD_XD SpaceNet-4 U-Net (VGG16 encoder)",
+      "architecture": "U-Net, VGG16 encoder, bilinear-upsampling decoder (num_filters=32), ~29.3 M params",
+      "source_url": "https://s3.amazonaws.com/spacenet-dataset/spacenet-model-weights/spacenet-4/xdxd_spacenet4_solaris_weights.pth",
+      "source_sha256": "c870877e4f0140ed8684b0ef368b334a825809992a39bc1c8cb7aca002b78b31",
+      "training_data": "SpaceNet 4 Off-Nadir Building Footprints (Atlanta, WorldView-2 pan-sharpened RGB)",
+      "license_note": "Weights published by CosmiQ Works / SpaceNet on the AWS Open Data Registry and distributed through the Apache-2.0 'solaris' library model zoo. The SpaceNet training data are licensed CC BY-SA 4.0. This project downloads the weights from the original source; it does not claim ownership or authorship of them."
+    },
+    "runtime": {
+      "backend": "onnx",
+      "device": "cpu"
+    },
+    "processed_at": "2026-11-01T01:46:20+00:00"
+  }
+}

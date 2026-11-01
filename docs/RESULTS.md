@@ -1,0 +1,16 @@
+# Measured results (all produced by code in this repo, 2026-11-01, 4-core CPU sandbox)
+
+**Demo inference** (`examples/demo`, SpaceNet-2 Vegas crop, ONNX, default config) vs the 20 SpaceNet reference polygons:
+
+| measure | value |
+|---|---|
+| candidates / references | 15 / 20 |
+| precision / recall / F1 (IoU ≥ 0.5, one-to-one) | 0.667 / 0.500 / 0.571 |
+| mean IoU of matched objects | 0.717 |
+| area IoU / area precision / area recall | 0.671 / 0.809 / 0.798 |
+
+Caveats: a single 512×512 crop, n = 20, a non-Quito scene, labels from the dataset (not re-reviewed). It shows the pipeline works end-to-end; it is **not** a validation of accuracy in Quito.
+
+**ONNX vs PyTorch** (random input, 512²): max |Δlogit| 5.7e-6, max |Δprob| 3.2e-8, mask agreement 1.0; 1.43 s (ORT) vs 2.21 s (torch) per tile.
+**Streamlit path** (ONNX, no torch/geopandas imported): ~2 s CPU per image, peak RSS ≈ 790 MB (ORT arena off; with arena on, 1.19 GB). This may be tight on Streamlit Community Cloud; the live deployment has not been created or tested.
+**Large raster:** synthetic 3072×3072 mosaic made by repeating the demo crop, 49 tiles, 90 s total, peak RSS 779 MB, 390 candidates (a scalability/behaviour test, not an accuracy test).

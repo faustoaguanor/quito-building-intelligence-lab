@@ -1,0 +1,16 @@
+{
+  "source_pth": {
+    "sha256": "c870877e4f0140ed8684b0ef368b334a825809992a39bc1c8cb7aca002b78b31",
+    "url": "https://s3.amazonaws.com/spacenet-dataset/spacenet-model-weights/spacenet-4/xdxd_spacenet4_solaris_weights.pth"
+  },
+  "safetensors": {
+    "file": "xdxd_spacenet4_unet_vgg16.safetensors",
+    "sha256": "91820a33ab0f9014a0721ca8cf30e29b593902080188a5307c12ae39c3e4c191",
+    "bytes": 117230516
+  },
+  "onnx": {
+    "file": "xdxd_spacenet4_unet_vgg16.onnx",
+    "sha256": "c46b3d0e2a3fc571374e25e5e5a8689e1de56e3653ba89f44eaea9c4a8b50586",
+    "bytes": 117239724
+  }
+}

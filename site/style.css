@@ -1,0 +1,20 @@
+:root{--bg:#0f1419;--fg:#e6edf3;--mut:#9aa7b4;--card:#18202a;--acc:#f5c518;--acc2:#4cc2ff;--bd:#2a3644}
+@media (prefers-color-scheme:light){:root{--bg:#f7f8fa;--fg:#14202b;--mut:#55636f;--card:#fff;--acc:#a37a00;--acc2:#0b6fa8;--bd:#d9e0e7}}
+*{box-sizing:border-box}html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+a{color:var(--acc2)}header,section,footer{padding:48px 16px}.wrap{max-width:1000px;margin:0 auto}
+header{padding-top:72px;border-bottom:1px solid var(--bd)}h1{font-size:clamp(2rem,5vw,3.2rem);line-height:1.1;margin:0 0 8px}
+h2{font-size:1.6rem;margin:0 0 16px}.sub{color:var(--mut);font-size:1.15rem;max-width:720px}
+nav{display:flex;gap:16px;flex-wrap:wrap;margin:24px 0}nav a{text-decoration:none;font-size:.95rem}
+.btn{display:inline-block;padding:10px 18px;border-radius:8px;border:1px solid var(--bd);background:var(--card);text-decoration:none;color:var(--fg);margin:4px 8px 4px 0}
+.btn.p{background:var(--acc);color:#111;border-color:var(--acc);font-weight:600}
+.grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fit,minmax(260px,1fr))}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:18px}
+.card h3{margin:0 0 6px;font-size:1.05rem}.mut{color:var(--mut)}
+figure{margin:0}figure img{width:100%;height:auto;border-radius:10px;border:1px solid var(--bd);image-rendering:auto}
+figcaption{font-size:.85rem;color:var(--mut);margin-top:6px}
+table{border-collapse:collapse;width:100%;font-size:.95rem}td,th{border-bottom:1px solid var(--bd);padding:8px;text-align:left}
+code,pre{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.88rem}pre{background:var(--card);border:1px solid var(--bd);padding:14px;border-radius:10px;overflow:auto}
+.warn{border-left:4px solid var(--acc);background:var(--card);padding:12px 16px;border-radius:6px}
+svg text{fill:var(--fg);font:13px system-ui}svg rect{fill:var(--card);stroke:var(--bd)}svg path{stroke:var(--mut);fill:none;stroke-width:1.5}
+.stat{font-size:2rem;font-weight:700;color:var(--acc)}
