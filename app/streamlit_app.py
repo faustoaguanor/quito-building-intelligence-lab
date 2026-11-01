@@ -55,6 +55,17 @@ _JOB_LOCK = threading.Lock()  # one inference job at a time per server process
 
 st.set_page_config(page_title="Building Footprint Lab", page_icon="🏘️", layout="wide")
 
+# Streamlit's default text boxes draw their border in the same colour as their fill, so in light mode (light grey
+# on white) their edges almost disappear. A mid-grey, semi-transparent border reads well on light and dark pages.
+st.markdown(
+    """<style>
+    [data-testid="stTextInputRootElement"], [data-testid="stNumberInputContainer"],
+    [data-testid="stSelectbox"] > div > div[role="group"], [data-testid="stFileUploaderDropzone"],
+    [data-testid="stTextAreaRootElement"] { border: 1px solid rgba(128, 128, 128, 0.55) !important; }
+    </style>""",
+    unsafe_allow_html=True,
+)
+
 
 @st.cache_resource(show_spinner="Cargando modelo ONNX…")
 def load_predictor():
