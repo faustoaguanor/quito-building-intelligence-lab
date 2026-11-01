@@ -9,4 +9,5 @@ pillow>=10
 streamlit>=1.30
 folium>=0.15
 streamlit-folium>=0.20
+# the app also prepends ./src to sys.path, so the repository code always wins over an installed copy
 -e .

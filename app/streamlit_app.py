@@ -3,16 +3,28 @@
 Uses the same core as the CLI (`quito_building_lab.pipeline.run_image`) with the ONNX backend.
 """
 
+# ruff: noqa: E402
 from __future__ import annotations
 
 import io
 import json
 import math
 import resource
+import sys
 import tempfile
 import threading
 import time
 from pathlib import Path
+
+# Always run the repository's own source: a stale copy of the package installed in the hosting
+# environment (Streamlit only reinstalls dependencies when requirements.txt changes) must never win.
+_SRC = Path(__file__).resolve().parents[1] / "src"
+if _SRC.is_dir():
+    sys.path[:] = [str(_SRC)] + [p for p in sys.path if p != str(_SRC)]  # repository source first
+    _loaded = sys.modules.get("quito_building_lab")
+    if _loaded is not None and not str(getattr(_loaded, "__file__", "")).startswith(str(_SRC)):
+        for _m in [k for k in sys.modules if k == "quito_building_lab" or k.startswith("quito_building_lab.")]:
+            del sys.modules[_m]  # a stale copy was already imported in this long-lived process
 
 import folium
 import numpy as np
