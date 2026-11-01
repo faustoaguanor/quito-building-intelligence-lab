@@ -4,9 +4,12 @@
 Workflow `.github/workflows/pages.yml` publishes `site/` with the official Pages actions. Enable once: *Settings → Pages → Source: GitHub Actions*. The URL is `https://faustoaguanor.github.io/quito-building-intelligence-lab/` only after the first successful run — check it before announcing.
 
 ## Streamlit Community Cloud
-1. <https://share.streamlit.io> → New app → repo `faustoaguanor/quito-building-intelligence-lab`, branch `main`, file `app/streamlit_app.py`, Python 3.11/3.12. Dependencies come from `requirements.txt` (CPU only, no torch).
-2. The 117 MB ONNX must be reachable at runtime but must not be committed. Host it (Hugging Face Hub file or a GitHub Release asset), then in *Advanced settings → Secrets/Env* set `QBL_ONNX_URL` (https) and `QBL_ONNX_SHA256` (hash of your exported file, `sha256sum`). Without them the app shows "model not available" — it never fakes results.
-3. Watch memory (≈ 0.8 GB peak measured locally). If the app is OOM-killed, use the static results on the portfolio site as fallback.
+1. **Build the model once (GitHub does it for you):** Actions → "Build ONNX model" → *Run workflow* (branch `main`). It downloads the original weights (SHA-256 verified), exports and validates the ONNX, and publishes `xdxd_spacenet4_unet_vgg16.onnx` plus its `.sha256` in the release `model-onnx-v1`.
+2. **Create the app:** <https://share.streamlit.io> → New app → repo `faustoaguanor/quito-building-intelligence-lab`, branch `main`, file `app/streamlit_app.py`, Python 3.12. Dependencies come from `requirements.txt` (CPU only, no torch).
+3. No secrets are needed: the app downloads the ONNX and its checksum from that release on first start. `QBL_ONNX_URL` / `QBL_ONNX_SHA256` are optional overrides (e.g. a Hugging Face copy).
+4. Watch memory (about 0.8 GB peak measured locally). If the app is restarted for lack of memory, use the static results on the portfolio site instead. The live deployment has not been tested by the author of this repo.
+
+If step 1 was not done the app says the model is not available; it never fakes results.
 
 ## Hugging Face Hub (optional)
 `python scripts/package_model.py` writes `models/hf/` (model card, checksums). Review license obligations of the SpaceNet weights, then `huggingface-cli login` and upload yourself. Never put tokens in the repo.

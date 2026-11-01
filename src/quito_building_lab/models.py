@@ -124,37 +124,48 @@ def download_weights(model_id: str, wdir: str | None = None, timeout: int = 120)
     return dest
 
 
-def ensure_onnx(model_id: str, wdir: str | None = None, timeout: int = 180) -> Path:
-    """Return the path of the ONNX model, downloading it from ``QBL_ONNX_URL`` if missing.
+DEFAULT_ONNX_URL = (
+    "https://github.com/faustoaguanor/quito-building-intelligence-lab/releases/download/"
+    "model-onnx-v1/{model_id}.onnx"
+)
 
-    The ONNX file is derived from the trusted checkpoint (see ``qbl export-onnx``). Hosting it
-    (Hugging Face Hub / GitHub release) is the maintainer's responsibility; the URL and the
-    expected SHA-256 are taken from the environment (``QBL_ONNX_URL``, ``QBL_ONNX_SHA256``).
+
+def _fetch(url: str, timeout: int) -> bytes:
+    if not url.startswith("https://"):
+        raise ModelWeightsError("ONNX URL must be https://")
+    with urllib.request.urlopen(url, timeout=timeout) as resp:
+        return resp.read()
+
+
+def ensure_onnx(model_id: str, wdir: str | None = None, timeout: int = 180) -> Path:
+    """Return the path of the ONNX model, downloading it if missing.
+
+    Default source: the project's GitHub Release asset (built by the *Build ONNX model* workflow),
+    with its published ``.sha256``. Override with ``QBL_ONNX_URL`` and ``QBL_ONNX_SHA256``.
     """
     spec = get_spec(model_id)
     dest = weight_paths(model_id, wdir)["onnx"]
-    expected = os.environ.get("QBL_ONNX_SHA256") or spec.onnx_sha256
     if dest.exists():
         return dest
-    url = os.environ.get("QBL_ONNX_URL")
-    if not url:
-        raise ModelWeightsError(
-            f"ONNX model not found at {dest}. Run `qbl export-onnx` locally or set QBL_ONNX_URL "
-            "(and QBL_ONNX_SHA256) to a hosted copy."
-        )
-    if not url.startswith("https://"):
-        raise ModelWeightsError("QBL_ONNX_URL must be an https:// URL.")
-    if not expected:
-        raise ModelWeightsError("Set QBL_ONNX_SHA256 so the downloaded model can be verified.")
-    tmp = Path(tempfile.mkstemp(dir=dest.parent, suffix=".part")[1])
+    url = os.environ.get("QBL_ONNX_URL") or DEFAULT_ONNX_URL.format(model_id=model_id)
+    expected = os.environ.get("QBL_ONNX_SHA256") or spec.onnx_sha256
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as resp, open(tmp, "wb") as out:
-            shutil.copyfileobj(resp, out)
-        if sha256_file(tmp) != expected:
-            raise ModelWeightsError("Checksum mismatch for downloaded ONNX model.")
-        tmp.replace(dest)
-    finally:
-        tmp.unlink(missing_ok=True)
+        if not expected:
+            expected = _fetch(url + ".sha256", timeout).decode().strip().split()[0]
+        tmp = Path(tempfile.mkstemp(dir=dest.parent, suffix=".part")[1])
+        try:
+            with urllib.request.urlopen(url, timeout=timeout) as resp, open(tmp, "wb") as out:
+                shutil.copyfileobj(resp, out)
+            if sha256_file(tmp) != expected:
+                raise ModelWeightsError("Checksum mismatch for downloaded ONNX model.")
+            tmp.replace(dest)
+        finally:
+            tmp.unlink(missing_ok=True)
+    except OSError as exc:
+        raise ModelWeightsError(
+            f"Could not download the ONNX model from {url} ({exc}). Run the 'Build ONNX model' "
+            "workflow once, or run `qbl export-onnx` locally."
+        ) from exc
     return dest
 
 

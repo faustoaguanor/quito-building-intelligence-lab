@@ -144,3 +144,34 @@ def test_real_inference_smoke():
     demo = Path(__file__).parents[1] / "examples/demo/vegas_sn2_img10_rgb8.tif"
     out = run_raster(str(demo), None, PipelineConfig())
     assert len(out.candidates) > 5
+
+
+def test_ensure_onnx_downloads_and_verifies(tmp_path, monkeypatch):
+    import hashlib
+    import io
+
+    import quito_building_lab.models as m
+
+    payload = b"fake-onnx-bytes"
+    digest = hashlib.sha256(payload).hexdigest()
+
+    def fake_urlopen(url, timeout=0):
+        return io.BytesIO(digest.encode() if url.endswith(".sha256") else payload)
+
+    monkeypatch.setattr(m.urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.delenv("QBL_ONNX_URL", raising=False)
+    monkeypatch.delenv("QBL_ONNX_SHA256", raising=False)
+    p = m.ensure_onnx("xdxd_spacenet4_unet_vgg16", str(tmp_path))
+    assert p.read_bytes() == payload
+
+
+def test_ensure_onnx_rejects_bad_checksum(tmp_path, monkeypatch):
+    import io
+
+    import quito_building_lab.models as m
+
+    monkeypatch.setattr(m.urllib.request, "urlopen",
+                        lambda url, timeout=0: io.BytesIO(b"0" * 64 if url.endswith(".sha256") else b"x"))
+    with pytest.raises(ModelWeightsError, match="Checksum"):
+        m.ensure_onnx("xdxd_spacenet4_unet_vgg16", str(tmp_path))
+    assert not list(tmp_path.glob("*.onnx"))
