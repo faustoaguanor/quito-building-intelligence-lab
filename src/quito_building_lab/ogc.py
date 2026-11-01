@@ -397,6 +397,56 @@ def wms_get_map(
     )
 
 
+def browser_getmap_request(
+    url: str,
+    layer: str,
+    bbox_lonlat: tuple[float, float, float, float],
+    layer_crs: list[str] | None = None,
+    version: str = "1.3.0",
+    size: int = TILE_PX,
+    fmt: str = "image/png",
+) -> dict:
+    """A single GetMap URL for the user's own browser to open and save (the request shape web maps use).
+
+    Used when a service answers the browser but not the server running the app. The returned dict keeps the
+    bbox, CRS and pixel size so :func:`geoimage_from_bytes` can georeference the saved file exactly.
+    """
+    crs_code = choose_crs_chain(layer_crs or [])[0]
+    bbox = bbox_lonlat_to_crs(bbox_lonlat, crs_code)
+    lat = (bbox_lonlat[1] + bbox_lonlat[3]) / 2
+    w_m = (bbox_lonlat[2] - bbox_lonlat[0]) * 111_320 * math.cos(math.radians(lat))
+    h_m = (bbox_lonlat[3] - bbox_lonlat[1]) * 110_574
+    longer = max(w_m, h_m)
+    width, height = max(32, round(size * w_m / longer)), max(32, round(size * h_m / longer))
+    params = _getmap_params(layer, bbox, crs_code, version, width, height, fmt, "")
+    return {"url": _request_url(url, params), "service_url": url, "layer": layer, "version": version,
+            "crs": crs_code, "bbox": bbox, "width": width, "height": height, "format": fmt,
+            "approx_gsd_m": round(longer / max(width, height), 3)}
+
+
+def geoimage_from_bytes(body: bytes, request: dict) -> GeoImage:
+    """Georeference an image saved from :func:`browser_getmap_request` with that request's bbox and CRS.
+
+    The image must have exactly the requested pixel size; anything else means it is not the image of that
+    request (or the server altered it), and georeferencing it would be wrong.
+    """
+    data, had_alpha = _decode_image(body)
+    h, w = data.shape[1:]
+    if (w, h) != (request["width"], request["height"]):
+        raise OGCError(f"The uploaded image is {w}x{h} px but the requested one is "
+                       f"{request['width']}x{request['height']} px; it is not the image of this request.")
+    rgb = np.moveaxis(data[:3], 0, -1)
+    valid = data[3] > 0 if had_alpha else rgb.any(axis=2)
+    return GeoImage(
+        rgb, valid, from_bounds(*request["bbox"], w, h), request["crs"], tuple(request["bbox"]),
+        {"service_url": request["service_url"], "layer": request["layer"], "version": request["version"],
+         "request_crs": request["crs"], "size_px": [w, h], "had_alpha": bool(had_alpha), "tiles": 1,
+         "approx_gsd_m": request["approx_gsd_m"], "format": request["format"], "request_url": request["url"],
+         "downloaded_by": "user's browser",
+         "note": "Rendered WMS image saved by the user's browser; not original orthophoto pixels."},
+    )
+
+
 def wms_probe(
     url: str,
     layer: str,

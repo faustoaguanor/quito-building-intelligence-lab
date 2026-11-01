@@ -224,6 +224,62 @@ def _set_center(lat: float, lon: float) -> None:
     st.session_state["center"] = (float(lat), float(lon))
 
 
+def _process_and_show(img: ogc.GeoImage, predictor, adv_thr: float, adv_min_area: float, adv_prob: bool,
+                      source: str) -> None:
+    """Shared by the automatic download and the browser-download path: checks, inference, results, downloads."""
+    reason = ogc.blank_reason(img)
+    if reason:
+        st.error(f"La capa devolvió una imagen **{reason}** para este cuadrado. Suele pasar cuando la capa no "
+                 "tiene datos en esa zona (p. ej. vuelos de dron de áreas concretas). Mueva el centro dentro "
+                 "de la zona con imagen o pruebe otra capa.")
+        st.image(img.array, caption="Imagen devuelta por el servicio", width=240)
+        return
+    cfg = PipelineConfig()
+    cfg.tiling.tile_size, cfg.tiling.overlap = 512, 0
+    cfg.postprocess.threshold, cfg.postprocess.min_area_m2 = adv_thr, adv_min_area
+    with tempfile.TemporaryDirectory() as tmp:
+        tif = ogc.write_geotiff(img, str(Path(tmp) / "wms_area.tif"))
+        with st.spinner("Ejecutando el modelo en CPU…"):
+            out = run_raster(tif, None, cfg, predictor=predictor)
+        tif_bytes = Path(tif).read_bytes()
+    base = Image.fromarray(img.array).convert("RGB")
+    draw = ImageDraw.Draw(base)
+    for g in _to_pixels(out.candidates.geoms, out.candidates.crs, img):
+        draw.line(list(g.exterior.coords), fill=(255, 235, 0), width=2)
+    prob = np.asarray(out.segmentation.probability)
+    cols = st.columns(3 if adv_prob else 2)
+    cols[0].image(img.array, caption=f"Imagen {source} ({img.array.shape[1]}×{img.array.shape[0]} px, "
+                                     f"≈ {img.meta['approx_gsd_m']} m/píxel)")
+    cols[1].image(base, caption="Huellas candidatas")
+    if adv_prob:
+        cols[2].image(_prob_overlay(img.array, prob), caption="Probabilidad del modelo (más claro = más probable)")
+    pmax, share = float(prob.max()), float((prob >= adv_thr).mean()) * 100
+    st.caption(f"Probabilidad máxima del modelo: {pmax:.2f} · píxeles por encima del umbral ({adv_thr:.2f}): {share:.1f} %")
+    if len(out.candidates) == 0:
+        if pmax < adv_thr:
+            st.warning("El modelo no ve edificios con esta configuración (su probabilidad máxima no llega al "
+                       "umbral). Pruebe bajar el umbral o cambiar la resolución; si sigue igual, la zona es "
+                       "demasiado distinta de los datos de entrenamiento.")
+        else:
+            st.warning("Hay probabilidad por encima del umbral pero las huellas son más pequeñas que el área "
+                       "mínima. Pruebe bajar el área mínima.")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Candidatos", len(out.candidates))
+    k2.metric("Área total (m²)", f"{out.candidates.total_area:,.0f}")
+    k3.metric("Tiempo CPU (s)", f"{out.report['segmentation']['total_s']:.1f}")
+    k4.metric("Memoria pico (MB)", f"{resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f}")
+    st.info("Son **candidatos** para revisión humana, no límites catastrales. Descargue las huellas y compárelas "
+            "con sus vectores en su SIG o con `qbl compare`.")
+    st.caption("Imagen obtenida de un servicio externo; compruebe sus condiciones de uso antes de reutilizarla.")
+    report = dict(out.report)
+    report["fetch"] = {"wms": img.meta}
+    d1, d2, d3 = st.columns(3)
+    d1.download_button("Imagen (GeoTIFF)", tif_bytes, "wms_area.tif", "image/tiff")
+    d2.download_button("Huellas candidatas (GeoJSON)", json.dumps(to_geojson_dict(out.candidates)).encode(),
+                       "candidatos.geojson", "application/geo+json")
+    d3.download_button("Informe (JSON)", json.dumps(report, indent=2, default=str).encode(), "informe.json")
+
+
 def tab_map():
     st.markdown(
         "Use **cualquier servicio WMS** con ortofotos: cargue sus capas, haga **clic en el mapa** para elegir el centro, "
@@ -357,6 +413,46 @@ def tab_map():
     else:
         st.success(f"Área válida: {side:.0f} m de lado dentro de la cobertura de la capa.")
 
+    with st.expander("🌐 Descargar la imagen con su navegador (si la descarga automática falla)"):
+        st.caption("Algunos servicios responden a su navegador (por eso ve la capa en el mapa) pero no al servidor de "
+                   "esta app. En ese caso descargue usted la imagen del cuadrado y súbala: la app la georreferencia con "
+                   "el mismo recuadro y sistema de coordenadas que pidió. Compruebe las condiciones de uso del servicio.")
+        if problem is None:
+            breq = ogc.browser_getmap_request(wms_url, layer.name, bbox, layer.crs, caps.version)
+            st.markdown(f"**1.** Abra la imagen del área ({breq['width']}×{breq['height']} px, "
+                        f"≈ {breq['approx_gsd_m']:.2f} m/píxel):")
+            st.link_button("Abrir la imagen del cuadrado en una pestaña nueva", breq["url"])
+            if breq["approx_gsd_m"] > 0.6:
+                st.caption("⚠️ Con este tamaño de cuadrado la imagen queda gruesa para el modelo (entrenado con "
+                           "~0,5 m/píxel); un cuadrado de unos 130 m o menos da mejor resolución.")
+            st.markdown("**2.** En esa pestaña, clic derecho sobre la imagen → *Guardar imagen como…*  \n"
+                        "**3.** Súbala aquí **sin mover el cuadrado** (si lo mueve, vuelva a descargarla):")
+            up = st.file_uploader("Imagen guardada (PNG o JPEG)", type=["png", "jpg", "jpeg"], key="browser_upload")
+            if up is not None and st.button("▶ Ejecutar inferencia con la imagen subida", type="primary",
+                                            key="browser_run"):
+                if up.size > MAX_BYTES:
+                    st.error("El archivo supera 5 MB.")
+                elif not _JOB_LOCK.acquire(blocking=False):
+                    st.warning("Hay otra inferencia en curso. Intente de nuevo en unos segundos.")
+                else:
+                    try:
+                        try:
+                            predictor = load_predictor()
+                        except (ModelWeightsError, OSError) as exc:
+                            st.error(f"El modelo no está disponible en este despliegue: {exc}")
+                        else:
+                            try:
+                                bimg = ogc.geoimage_from_bytes(up.getvalue(), breq)
+                            except ogc.OGCError as exc:
+                                st.error(f"No se pudo usar la imagen subida: {exc}")
+                            else:
+                                _process_and_show(bimg, predictor, adv_thr, adv_min_area, adv_prob,
+                                                  "descargada con su navegador")
+                    finally:
+                        _JOB_LOCK.release()
+        else:
+            st.info("Primero elija una capa y coloque el cuadrado dentro de su cobertura.")
+
     with st.expander("🔧 Diagnóstico del servicio (si la descarga falla)"):
         st.caption("Hace hasta 5 peticiones de prueba, una a una, en el centro del cuadrado, cambiando el tamaño, la "
                    "transparencia, el formato y el sistema de coordenadas, y le dice cuáles acepta el servidor. "
@@ -396,57 +492,7 @@ def tab_map():
                             st.markdown(f"**{a['crs']}** — {'✅ ok' if a['ok'] else '❌ ' + a.get('error', '')}")
                             st.code(a["url"], language=None)
                 return
-            reason = ogc.blank_reason(img)
-            if reason:
-                st.error(f"La capa devolvió una imagen **{reason}** para este cuadrado. Suele pasar cuando la capa no "
-                         "tiene datos en esa zona (p. ej. vuelos de dron de áreas concretas). Mueva el centro dentro "
-                         "de la zona con imagen o pruebe otra capa.")
-                st.image(img.array, caption="Imagen devuelta por el servicio", width=240)
-                return
-            cfg = PipelineConfig()
-            cfg.tiling.tile_size, cfg.tiling.overlap = 512, 0
-            cfg.postprocess.threshold, cfg.postprocess.min_area_m2 = adv_thr, adv_min_area
-            with tempfile.TemporaryDirectory() as tmp:
-                tif = ogc.write_geotiff(img, str(Path(tmp) / "wms_area.tif"))
-                with st.spinner("Ejecutando el modelo en CPU…"):
-                    out = run_raster(tif, None, cfg, predictor=predictor)
-                tif_bytes = Path(tif).read_bytes()
-            base = Image.fromarray(img.array).convert("RGB")
-            draw = ImageDraw.Draw(base)
-            for g in _to_pixels(out.candidates.geoms, out.candidates.crs, img):
-                draw.line(list(g.exterior.coords), fill=(255, 235, 0), width=2)
-            prob = np.asarray(out.segmentation.probability)
-            cols = st.columns(3 if adv_prob else 2)
-            cols[0].image(img.array, caption=f"Imagen WMS descargada ({img.array.shape[1]}×{img.array.shape[0]} px, "
-                                             f"≈ {img.meta['approx_gsd_m']} m/píxel)")
-            cols[1].image(base, caption="Huellas candidatas")
-            if adv_prob:
-                cols[2].image(_prob_overlay(img.array, prob), caption="Probabilidad del modelo (más claro = más probable)")
-            pmax, share = float(prob.max()), float((prob >= adv_thr).mean()) * 100
-            st.caption(f"Probabilidad máxima del modelo: {pmax:.2f} · píxeles por encima del umbral ({adv_thr:.2f}): {share:.1f} %")
-            if len(out.candidates) == 0:
-                if pmax < adv_thr:
-                    st.warning("El modelo no ve edificios con esta configuración (su probabilidad máxima no llega al "
-                               "umbral). Pruebe bajar el umbral o cambiar la resolución; si sigue igual, la zona es "
-                               "demasiado distinta de los datos de entrenamiento.")
-                else:
-                    st.warning("Hay probabilidad por encima del umbral pero las huellas son más pequeñas que el área "
-                               "mínima. Pruebe bajar el área mínima.")
-            k1, k2, k3, k4 = st.columns(4)
-            k1.metric("Candidatos", len(out.candidates))
-            k2.metric("Área total (m²)", f"{out.candidates.total_area:,.0f}")
-            k3.metric("Tiempo CPU (s)", f"{out.report['segmentation']['total_s']:.1f}")
-            k4.metric("Memoria pico (MB)", f"{resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024:.0f}")
-            st.info("Son **candidatos** para revisión humana, no límites catastrales. Descargue las huellas y compárelas "
-                    "con sus vectores en su SIG o con `qbl compare`.")
-            st.caption("Imagen obtenida de un servicio externo; compruebe sus condiciones de uso antes de reutilizarla.")
-            report = dict(out.report)
-            report["fetch"] = {"wms": img.meta}
-            d1, d2, d3 = st.columns(3)
-            d1.download_button("Imagen (GeoTIFF)", tif_bytes, "wms_area.tif", "image/tiff")
-            d2.download_button("Huellas candidatas (GeoJSON)", json.dumps(to_geojson_dict(out.candidates)).encode(),
-                               "candidatos.geojson", "application/geo+json")
-            d3.download_button("Informe (JSON)", json.dumps(report, indent=2, default=str).encode(), "informe.json")
+            _process_and_show(img, predictor, adv_thr, adv_min_area, adv_prob, "WMS descargada")
         finally:
             _JOB_LOCK.release()
 
