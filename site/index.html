@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quito Building Intelligence Lab</title>
+<meta name="description" content="Extracción asistida por IA de huellas de edificios y evaluación de calidad catastral en Quito. Proyecto de código abierto.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230f1419'/%3E%3Cpath d='M6 24V14l10-8 10 8v10z' fill='%23f5c518'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css"></head><body>
+<header><div class="wrap">
+<h1>Quito Building Intelligence Lab</h1>
+<p class="sub">AI-Assisted Building Footprint Extraction and Cadastral Quality Assessment. Un motor Python reutilizable que detecta cubiertas candidatas en ortofotos de alta resolución, las vectoriza con georreferenciación válida y las compara con geometría catastral para priorizar revisión humana.</p>
+<nav><a href="#contexto">Contexto</a><a href="#flujo">Flujo</a><a href="#arquitectura">Arquitectura</a><a href="#modelo">Modelo</a><a href="#resultados">Resultados</a><a href="#calidad">Calidad</a><a href="#limites">Límites</a><a href="#instalar">Instalación</a></nav>
+<a class="btn p" href="https://github.com/faustoaguanor/quito-building-intelligence-lab">Repositorio en GitHub</a>
+<a class="btn" id="demo-link" href="https://github.com/faustoaguanor/quito-building-intelligence-lab/blob/main/docs/DEPLOYMENT.md">Demo Streamlit: instrucciones de despliegue</a>
+<p class="mut">Estado honesto: la demo pública de Streamlit y el modelo en Hugging Face <b>aún no están publicados</b>; este sitio no ejecuta inferencia (es estático). Los resultados mostrados fueron generados por el código del repositorio.</p>
+</div></header>
+
+<section id="contexto"><div class="wrap"><h2>Contexto y problema</h2>
+<p>El Distrito Metropolitano de Quito crece de forma continua, y mantener actualizada la información catastral de construcciones requiere contrastarla con imágenes aéreas recientes. Detectar manualmente techos en ortofotos de alta resolución es lento. Este proyecto automatiza una primera pasada: <b>candidatos</b> de cubiertas y su correspondencia con geometrías catastrales.</p>
+<div class="warn"><b>Precisión conceptual.</b> La geometría visible de un techo no es el límite legal de una construcción. Las discrepancias son <b>avisos para revisión humana</b>, no errores catastrales comprobados, edificaciones no registradas ni construcciones ilegales.</div>
+</div></section>
+
+<section id="flujo"><div class="wrap"><h2>Flujo de trabajo</h2><div class="grid">
+<div class="card"><h3>1 · Entrada</h3><p class="mut">GeoTIFF georreferenciado; validación de bandas, CRS, resolución y NoData.</p></div>
+<div class="card"><h3>2 · Inferencia</h3><p class="mut">Teselas con solape, remuestreo al GSD objetivo, PyTorch u ONNX Runtime en CPU/CUDA.</p></div>
+<div class="card"><h3>3 · Vectorización</h3><p class="mut">Umbral, limpieza, polígonos válidos, área mínima en m², deduplicación, georreferencia preservada.</p></div>
+<div class="card"><h3>4 · Comparación</h3><p class="mut">IoU, cobertura, diferencia de área; clases: fuerte, parcial, sin referencia, ambigua, no evaluada.</p></div>
+<div class="card"><h3>5 · Salidas</h3><p class="mut">GeoJSON, GeoPackage, máscaras GeoTIFF, informes JSON/Markdown con procedencia.</p></div>
+</div></div></section>
+
+<section id="arquitectura"><div class="wrap"><h2>Arquitectura: un motor, tres destinos</h2>
+<svg viewBox="0 0 900 250" width="100%" role="img" aria-label="Diagrama de arquitectura">
+<rect x="20" y="95" width="200" height="60" rx="8"/><text x="120" y="130" text-anchor="middle">Núcleo Python (quito_building_lab)</text>
+<rect x="340" y="20" width="220" height="56" rx="8"/><text x="450" y="52" text-anchor="middle">CLI / app local (GeoTIFF grandes)</text>
+<rect x="340" y="100" width="220" height="56" rx="8"/><text x="450" y="132" text-anchor="middle">Streamlit (1 imagen, CPU)</text>
+<rect x="340" y="180" width="220" height="56" rx="8"/><text x="450" y="212" text-anchor="middle">GitHub Pages (portafolio estático)</text>
+<rect x="680" y="95" width="200" height="60" rx="8"/><text x="780" y="130" text-anchor="middle">Pesos: origen confiable + SHA-256</text>
+<path d="M220 125 L340 48"/><path d="M220 125 L340 128"/><path d="M220 125 L340 208" stroke-dasharray="5 4"/><path d="M680 125 L560 128"/>
+</svg>
+<p class="mut">Las rutas con línea punteada no ejecutan Python: Pages solo muestra resultados precomputados.</p></div></section>
+
+<section id="modelo"><div class="wrap"><h2>Segmentación preentrenada</h2>
+<p><b>XD_XD · SpaceNet-4 · U-Net con encoder VGG16</b> (29,3 M de parámetros, 117 MB). Modelo real de segmentación de edificios en RGB, entrenado con imágenes WorldView-2 (~0,5 m) de Atlanta. Se descarga desde la fuente original (AWS Open Data) con verificación SHA-256; no se afirma autoría ni propiedad. Se validó la exportación a ONNX: diferencia máxima de probabilidad 3,2·10⁻⁸ y 100 % de concordancia de máscara; 1,4 s por tesela de 512² con ONNX frente a 2,2 s con PyTorch (4 núcleos).</p>
+<p class="mut">No se entrenó ni ajustó ningún modelo con datos de Quito. Existe un flujo de fine-tuning documentado para etiquetas futuras, sin ejecutar.</p></div></section>
+
+<section id="resultados"><div class="wrap"><h2>Resultados reales del ejemplo</h2>
+<p>Recorte de 512×512 px de SpaceNet-2 (Las Vegas, CC BY-SA 4.0). <b>No es Quito</b>: no se pudo obtener ni redistribuir una muestra de Quito (ver <a href="https://github.com/faustoaguanor/quito-building-intelligence-lab/blob/main/docs/DATA_SOURCES.md">fuentes</a>).</p>
+<div class="grid">
+<figure><img src="assets/demo_input.png" alt="Imagen de entrada" loading="lazy"><figcaption>Entrada (RGB 8 bits)</figcaption></figure>
+<figure><img src="assets/demo_probability.png" alt="Mapa de probabilidad" loading="lazy"><figcaption>Probabilidad del modelo</figcaption></figure>
+<figure><img src="assets/demo_overlay.png" alt="Polígonos candidatos sobre la imagen" loading="lazy"><figcaption>Amarillo: candidatos · Cian: referencia SpaceNet</figcaption></figure>
+</div>
+<table id="metrics" style="margin-top:20px"><tr><th>Medida (IoU ≥ 0,5)</th><th>Valor</th></tr><tr><td colspan="2" class="mut">Cargando…</td></tr></table>
+<p class="mut">n = 20 edificios en un solo recorte: ilustra el funcionamiento del flujo; <b>no</b> valida la exactitud en Quito. Prueba de escala: mosaico sintético de 3072² px (49 teselas) en 90 s con ~780 MB de RAM pico en CPU.</p></div></section>
+
+<section id="calidad"><div class="wrap"><h2>Metodología de calidad</h2>
+<div class="grid"><div class="card"><h3>Rendimiento del modelo</h3><p class="mut">Solo frente a etiquetas de techos revisadas de forma independiente.</p></div>
+<div class="card"><h3>Correspondencia catastral</h3><p class="mut">Coincidencia many-to-many por componentes conexas; umbrales de demostración, no tolerancias oficiales.</p></div>
+<div class="card"><h3>Calidad geométrica</h3><p class="mut">Validez, vacíos, solapes, CRS declarado. Organizado según ISO 19157-1:2023 (sin certificación ni conformidad oficial).</p></div></div></div></section>
+
+<section id="limites"><div class="wrap"><h2>Limitaciones</h2><ul>
+<li>Modelo entrenado fuera de Quito; el rendimiento local no está validado.</li>
+<li>Los servicios WMS/WFS municipales no pudieron consultarse desde el entorno de desarrollo; capas, GSD (~7 cm es una suposición) y permisos de redistribución siguen sin verificar.</li>
+<li>Sin exactitud posicional: requiere una referencia independiente de mayor precisión.</li>
+<li>CPU/RAM/VRAM limitan el tamaño práctico; no se promete escalabilidad ilimitada.</li>
+<li>La demo en la nube procesa una imagen ≤ 512×512 y entrega coordenadas en píxeles si no hay georreferencia.</li></ul></div></section>
+
+<section id="instalar"><div class="wrap"><h2>Instalación local (Linux)</h2>
+<pre>git clone https://github.com/faustoaguanor/quito-building-intelligence-lab.git
+cd quito-building-intelligence-lab
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cpu   # o build CUDA acorde a su driver
+pip install -e ".[gis,torch,onnx,export,app,dev]"
+qbl download-model &amp;&amp; qbl export-onnx
+qbl run ortofoto.tif --out salidas/run1 --reference construcciones.gpkg --device auto</pre></div></section>
+
+<footer><div class="wrap mut">
+<p>Código MIT © 2026 faustoaguanor. Pesos del modelo: XD_XD / CosmiQ Works / SpaceNet (datos CC BY-SA 4.0). Imagen de ejemplo: SpaceNet-2 / Maxar, CC BY-SA 4.0. Proyecto independiente: no implica respaldo del Municipio de Quito, Streamlit, Hugging Face ni de los proveedores del modelo.</p></div></footer>
+<script>
+fetch('assets/demo_results.json').then(r=>r.json()).then(d=>{const m=d.detection_metrics,t=document.getElementById('metrics');
+const rows=[['Candidatos / referencias',m.n_predictions+' / '+m.n_reference],['Precisión',m.precision],['Exhaustividad (recall)',m.recall],['F1',m.f1],['IoU medio de coincidencias',m.mean_iou_matched],['IoU de área',m.area_iou]];
+t.innerHTML='<tr><th>Medida (IoU ≥ 0,5)</th><th>Valor</th></tr>'+rows.map(r=>'<tr><td>'+r[0]+'</td><td>'+r[1]+'</td></tr>').join('')}).catch(()=>{});
+</script></body></html>

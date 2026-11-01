@@ -1,0 +1,32 @@
+name: CI
+on:
+  push: {branches: [main]}
+  pull_request:
+permissions: {contents: read}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: {python-version: ["3.10", "3.12"]}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "${{ matrix.python-version }}", cache: pip}
+      - run: pip install -e ".[gis,onnx,dev]"
+      - run: ruff check .
+      - run: pytest -q
+      - name: Verify package structure
+        run: python -c "import quito_building_lab, quito_building_lab.cli, quito_building_lab.pipeline" && qbl --help
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate static site references
+        run: |
+          python - <<'PY'
+          import re, pathlib, sys
+          root = pathlib.Path("site"); html = (root / "index.html").read_text()
+          refs = re.findall(r'(?:src|href)="((?!https?:|#|data:)[^"]+)"', html) + re.findall(r"fetch\('([^']+)'", html)
+          missing = [r for r in refs if not (root / r).exists()]
+          sys.exit(f"missing: {missing}" if missing else 0)
+          PY

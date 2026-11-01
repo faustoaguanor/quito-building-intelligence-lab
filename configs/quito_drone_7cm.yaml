@@ -1,0 +1,5 @@
+# Starting point for very-high-resolution Quito drone orthophotos (verify the real GSD with `qbl info`).
+# The pretrained model saw ~0.5 m imagery; 0.3 m is a conservative resampling target. Tune empirically.
+inference: {device: auto, batch_size: 4, backend: auto}
+tiling: {tile_size: 512, overlap: 96, target_gsd: 0.3}
+postprocess: {min_area_m2: 12.0, simplify_tolerance: 0.4}

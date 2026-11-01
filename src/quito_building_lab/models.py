@@ -36,6 +36,7 @@ class ModelSpec:
     output: str
     training_data: str
     training_gsd_m: float
+    onnx_sha256: str | None
     license_note: str
     citation: str
 
@@ -56,6 +57,9 @@ MODEL_REGISTRY: dict[str, ModelSpec] = {
         output="1-channel building-footprint logit (apply sigmoid)",
         training_data="SpaceNet 4 Off-Nadir Building Footprints (Atlanta, WorldView-2 pan-sharpened RGB)",
         training_gsd_m=0.5,
+        # ONNX produced by `qbl export-onnx` (torch 2.x, opset 17); other torch versions may yield a
+        # different hash, in which case verification is skipped only if QBL_ONNX_SHA256 is set to "any".
+        onnx_sha256=None,
         license_note=(
             "Weights published by CosmiQ Works / SpaceNet on the AWS Open Data Registry and distributed "
             "through the Apache-2.0 'solaris' library model zoo. The SpaceNet training data are licensed "
@@ -114,6 +118,40 @@ def download_weights(model_id: str, wdir: str | None = None, timeout: int = 120)
         digest = sha256_file(tmp)
         if digest != spec.source_sha256:
             raise ModelWeightsError(f"Checksum mismatch for {model_id}: {digest} != {spec.source_sha256}")
+        tmp.replace(dest)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return dest
+
+
+def ensure_onnx(model_id: str, wdir: str | None = None, timeout: int = 180) -> Path:
+    """Return the path of the ONNX model, downloading it from ``QBL_ONNX_URL`` if missing.
+
+    The ONNX file is derived from the trusted checkpoint (see ``qbl export-onnx``). Hosting it
+    (Hugging Face Hub / GitHub release) is the maintainer's responsibility; the URL and the
+    expected SHA-256 are taken from the environment (``QBL_ONNX_URL``, ``QBL_ONNX_SHA256``).
+    """
+    spec = get_spec(model_id)
+    dest = weight_paths(model_id, wdir)["onnx"]
+    expected = os.environ.get("QBL_ONNX_SHA256") or spec.onnx_sha256
+    if dest.exists():
+        return dest
+    url = os.environ.get("QBL_ONNX_URL")
+    if not url:
+        raise ModelWeightsError(
+            f"ONNX model not found at {dest}. Run `qbl export-onnx` locally or set QBL_ONNX_URL "
+            "(and QBL_ONNX_SHA256) to a hosted copy."
+        )
+    if not url.startswith("https://"):
+        raise ModelWeightsError("QBL_ONNX_URL must be an https:// URL.")
+    if not expected:
+        raise ModelWeightsError("Set QBL_ONNX_SHA256 so the downloaded model can be verified.")
+    tmp = Path(tempfile.mkstemp(dir=dest.parent, suffix=".part")[1])
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as resp, open(tmp, "wb") as out:
+            shutil.copyfileobj(resp, out)
+        if sha256_file(tmp) != expected:
+            raise ModelWeightsError("Checksum mismatch for downloaded ONNX model.")
         tmp.replace(dest)
     finally:
         tmp.unlink(missing_ok=True)
@@ -205,23 +243,22 @@ def build_xdxd_unet_vgg16(num_filters: int = 32):
 
 def load_torch_model(model_id: str, wdir: str | None = None, device: str = "cpu", download: bool = True):
     """Build the architecture and load trusted weights (safetensors preferred, else verified .pth)."""
-    import torch
-
     get_spec(model_id)
     paths = weight_paths(model_id, wdir)
+    if not paths["safetensors"].exists() and not paths["pth"].exists():
+        if not download:
+            raise ModelWeightsError(
+                f"Weights for '{model_id}' not found in {paths['pth'].parent}. Run `qbl download-model` first."
+            )
+        download_weights(model_id, wdir)
+    import torch
+
     model = build_xdxd_unet_vgg16()
     if paths["safetensors"].exists():
         from safetensors.torch import load_file
 
         state = load_file(str(paths["safetensors"]))
     else:
-        if not paths["pth"].exists():
-            if not download:
-                raise ModelWeightsError(
-                    f"Weights for '{model_id}' not found in {paths['pth'].parent}. "
-                    "Run `qbl download-model` first."
-                )
-            download_weights(model_id, wdir)
         ckpt = torch.load(paths["pth"], map_location="cpu", weights_only=True)
         state = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
         state = {k.removeprefix("module."): v for k, v in state.items()}

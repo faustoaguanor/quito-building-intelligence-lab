@@ -1,0 +1,333 @@
+{
+  "segmentation": {
+    "processed_grid": "462x462",
+    "resample_factor": 1.1085,
+    "processed_gsd_m": 0.3,
+    "tiles": 1,
+    "raw_polygons": 17,
+    "candidates": 15,
+    "read_s": 0.01,
+    "inference_s": 1.67,
+    "total_s": 1.72
+  },
+  "geometry_quality": {
+    "n_features": 15,
+    "invalid_geometries": 0,
+    "empty_geometries": 0,
+    "non_polygon_geometries": 0,
+    "overlapping_pairs": 0,
+    "with_holes": 0,
+    "crs": "EPSG:32611",
+    "has_crs": true,
+    "min_area": 11.225,
+    "max_area": 1282.132,
+    "mean_area": 298.07
+  },
+  "reference_import": {
+    "source": "/home/user/quito-building-intelligence-lab/examples/demo/vegas_sn2_img10_reference_buildings.geojson",
+    "layer": null,
+    "kind": "construction",
+    "input_features": 20,
+    "empty_geometries": 0,
+    "null_geometries": 0,
+    "non_polygonal": 0,
+    "invalid_fixed": 0,
+    "duplicates_removed": 0,
+    "output_polygons": 20,
+    "source_crs": "EPSG:4979",
+    "crs_assigned_by_user": false,
+    "missing_attributes": [],
+    "warnings": []
+  },
+  "correspondence": {
+    "matching_model": "many-to-many (connected components of the overlap graph)",
+    "thresholds": {
+      "strong_iou": 0.5,
+      "min_coverage": 0.1,
+      "note": "Demonstration parameters, not official cadastral tolerances."
+    },
+    "reference_kind": "construction",
+    "n_candidates": 15,
+    "n_references": 20,
+    "n_pairs": 14,
+    "candidates_by_class": {
+      "strong_correspondence": 9,
+      "partial_correspondence": 1,
+      "candidate_without_reference": 3,
+      "reference_without_candidate": 0,
+      "ambiguous_match": 2,
+      "not_evaluated": 0
+    },
+    "references_by_class": {
+      "strong_correspondence": 9,
+      "partial_correspondence": 1,
+      "candidate_without_reference": 0,
+      "reference_without_candidate": 6,
+      "ambiguous_match": 4,
+      "not_evaluated": 0
+    },
+    "candidate_area_m2": 4471.04,
+    "reference_area_m2": 4534.28,
+    "overlap_area_m2": 3615.92,
+    "area_iou": 0.6709,
+    "reference_area_covered_pct": 79.75,
+    "crs": "EPSG:32611",
+    "groups": [
+      {
+        "group_id": 1,
+        "relation": "one-to-one",
+        "group_iou": 0.8024,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": 1.8596413909786733
+      },
+      {
+        "group_id": 2,
+        "relation": "one-to-one",
+        "group_iou": 0.7707,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": 53.77551168046159
+      },
+      {
+        "group_id": 3,
+        "relation": "one-to-one",
+        "group_iou": 0.5573,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": 8.302819446172089
+      },
+      {
+        "group_id": 4,
+        "relation": "one-to-one",
+        "group_iou": 0.4564,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": 92.45330239476561
+      },
+      {
+        "group_id": 5,
+        "relation": "one-to-many",
+        "group_iou": 0.7427,
+        "n_candidates": 1,
+        "n_references": 2,
+        "group_area_diff": -323.8525136561458
+      },
+      {
+        "group_id": 6,
+        "relation": "one-to-one",
+        "group_iou": 0.5836,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": 6.757261995732733
+      },
+      {
+        "group_id": 7,
+        "relation": "one-to-one",
+        "group_iou": 0.789,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": -118.70280913080677
+      },
+      {
+        "group_id": 8,
+        "relation": "one-to-one",
+        "group_iou": 0.5276,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": -12.031994011029042
+      },
+      {
+        "group_id": 9,
+        "relation": "one-to-one",
+        "group_iou": 0.7759,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": 130.45978680947445
+      },
+      {
+        "group_id": 10,
+        "relation": "one-to-one",
+        "group_iou": 0.8271,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": -38.58151443466994
+      },
+      {
+        "group_id": 11,
+        "relation": "one-to-many",
+        "group_iou": 0.4929,
+        "n_candidates": 1,
+        "n_references": 2,
+        "group_area_diff": -8.984758387370846
+      },
+      {
+        "group_id": 12,
+        "relation": "one-to-one",
+        "group_iou": 0.8286,
+        "n_candidates": 1,
+        "n_references": 1,
+        "group_area_diff": -49.120212165412454
+      }
+    ]
+  },
+  "detection_metrics": {
+    "iou_threshold": 0.5,
+    "n_predictions": 15,
+    "n_reference": 20,
+    "true_positives": 10,
+    "false_positives": 5,
+    "false_negatives": 10,
+    "precision": 0.6667,
+    "recall": 0.5,
+    "f1": 0.5714,
+    "mean_iou_matched": 0.7169,
+    "area_iou": 0.6709,
+    "area_precision": 0.8087,
+    "area_recall": 0.7975,
+    "units": "m2"
+  },
+  "iso19157": {
+    "standard_reference": "ISO 19157-1:2023 (conceptual organisation only; no conformity claim)",
+    "logical_consistency": {
+      "topological_consistency": {
+        "invalid_geometries": 0,
+        "overlapping_pairs": 0
+      },
+      "format_consistency": {
+        "non_polygon_geometries": 0,
+        "empty_geometries": 0,
+        "crs_declared": true
+      }
+    },
+    "completeness": {
+      "basis": "independently reviewed roof labels",
+      "commission_rate": 0.3333,
+      "omission_rate": 0.5
+    },
+    "thematic_accuracy": {
+      "basis": "classification correctness of 'roof' objects vs reviewed labels",
+      "precision": 0.6667,
+      "recall": 0.5,
+      "f1": 0.5714
+    },
+    "positional_accuracy": "Not assessed: requires an independent reference of higher accuracy.",
+    "temporal_quality": "Not assessed: acquisition dates of imagery/reference unknown.",
+    "cadastral_correspondence": {
+      "note": "Agreement between visible-roof candidates and cadastral geometry. Discrepancies are items for human review, not proven cadastral errors.",
+      "reference_kind": "construction",
+      "candidates_by_class": {
+        "strong_correspondence": 9,
+        "partial_correspondence": 1,
+        "candidate_without_reference": 3,
+        "reference_without_candidate": 0,
+        "ambiguous_match": 2,
+        "not_evaluated": 0
+      },
+      "references_by_class": {
+        "strong_correspondence": 9,
+        "partial_correspondence": 1,
+        "candidate_without_reference": 0,
+        "reference_without_candidate": 6,
+        "ambiguous_match": 4,
+        "not_evaluated": 0
+      },
+      "area_iou": 0.6709
+    }
+  },
+  "limitations": [
+    "Candidates are visible roof outlines predicted by a model trained on SpaceNet-4 (Atlanta, WorldView-2 ~0.5 m); performance on Quito imagery has not been validated with reviewed Quito labels.",
+    "Visible roof geometry is not equivalent to legal cadastral building / construction-unit boundaries.",
+    "Discrepancies with cadastral data are review prompts, not proven cadastral errors, unregistered or illegal constructions.",
+    "Matching thresholds are demonstration parameters, not official cadastral tolerances.",
+    "Positional accuracy is not assessed without an independent higher-accuracy reference."
+  ],
+  "provenance": {
+    "software": {
+      "name": "quito-building-lab",
+      "version": "0.1.0",
+      "python": "3.13.18",
+      "rasterio": "1.5.2",
+      "shapely": "2.2.0"
+    },
+    "model": {
+      "model_id": "xdxd_spacenet4_unet_vgg16",
+      "name": "XD_XD SpaceNet-4 U-Net (VGG16 encoder)",
+      "architecture": "U-Net, VGG16 encoder, bilinear-upsampling decoder (num_filters=32), ~29.3 M params",
+      "source_url": "https://s3.amazonaws.com/spacenet-dataset/spacenet-model-weights/spacenet-4/xdxd_spacenet4_solaris_weights.pth",
+      "source_sha256": "c870877e4f0140ed8684b0ef368b334a825809992a39bc1c8cb7aca002b78b31",
+      "training_data": "SpaceNet 4 Off-Nadir Building Footprints (Atlanta, WorldView-2 pan-sharpened RGB)",
+      "license_note": "Weights published by CosmiQ Works / SpaceNet on the AWS Open Data Registry and distributed through the Apache-2.0 'solaris' library model zoo. The SpaceNet training data are licensed CC BY-SA 4.0. This project downloads the weights from the original source; it does not claim ownership or authorship of them."
+    },
+    "runtime": {
+      "backend": "onnx",
+      "device": "cpu"
+    },
+    "parameters": {
+      "inference": {
+        "model_id": "xdxd_spacenet4_unet_vgg16",
+        "backend": "auto",
+        "device": "cpu",
+        "batch_size": 1,
+        "weights_dir": null,
+        "normalization": "image_stats"
+      },
+      "tiling": {
+        "tile_size": 512,
+        "overlap": 64,
+        "target_gsd": 0.3,
+        "max_pixels": 400000000
+      },
+      "postprocess": {
+        "threshold": 0.5,
+        "sieve_pixels": 20,
+        "min_area_m2": 8.0,
+        "min_area_px": 30.0,
+        "simplify_tolerance": 0.5,
+        "fill_holes_smaller_than_m2": 4.0,
+        "keep_holes": true
+      },
+      "matching": {
+        "strong_iou": 0.5,
+        "min_coverage": 0.1,
+        "reference_kind": "construction"
+      }
+    },
+    "input": {
+      "path": "/home/user/quito-building-intelligence-lab/examples/demo/vegas_sn2_img10_rgb8.tif",
+      "width": 512,
+      "height": 512,
+      "count": 3,
+      "dtypes": [
+        "uint8",
+        "uint8",
+        "uint8"
+      ],
+      "crs": "EPSG:4326",
+      "crs_is_geographic": true,
+      "transform": [
+        2.7000000000043656e-06,
+        0.0,
+        -115.3073313,
+        0.0,
+        -2.699999999993434e-06,
+        36.143906399799995
+      ],
+      "res": [
+        2.7000000000043656e-06,
+        2.699999999993434e-06
+      ],
+      "gsd_m": 0.27063441589428683,
+      "nodata": null,
+      "rgb_bands": [
+        1,
+        2,
+        3
+      ],
+      "has_alpha": false,
+      "georeferenced": true,
+      "warnings": []
+    },
+    "processed_at": "2026-11-01T01:46:20+00:00"
+  }
+}
