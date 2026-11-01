@@ -234,6 +234,17 @@ def tab_map():
             opts = [la for la in caps.layers if q in la.name.lower() or q in la.title.lower()][:300]
             layer = st.selectbox("Capa", opts, format_func=lambda la: f"{la.title} — {la.name}") if opts else None
             st.caption(f"{len(caps.layers)} capas; WMS {caps.version}.")
+        else:
+            with st.expander("¿No carga el listado? Escriba la capa a mano", expanded=False):
+                st.caption("Útil si el servidor no responde a la lista de capas pero sí a las imágenes. "
+                           "Si el servidor bloquea a Streamlit Cloud, ejecute la app en su computadora: "
+                           "`streamlit run app/streamlit_app.py`.")
+                mname = st.text_input("Nombre exacto de la capa (ej. usigc:ortofoto)", key="manual_layer")
+                mcrs = st.selectbox("CRS de la petición", list(ogc.PREFERRED_CRS), key="manual_crs")
+                mver = st.selectbox("Versión WMS", ["1.3.0", "1.1.1"], key="manual_ver")
+                if mname.strip():
+                    layer = ogc.WmsLayer(mname.strip(), mname.strip(), [mcrs])
+                    caps = ogc.WmsCapabilities(wms_url, mver, "(manual)", ["image/png"], [layer])
     with c2:
         st.subheader("2. Vectores para comparar (opcional)")
         use_wfs = st.checkbox("Comparar con un WFS (UC / bloques / construcciones)")
