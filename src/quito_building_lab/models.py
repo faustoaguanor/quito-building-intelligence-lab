@@ -243,23 +243,22 @@ def build_xdxd_unet_vgg16(num_filters: int = 32):
 
 def load_torch_model(model_id: str, wdir: str | None = None, device: str = "cpu", download: bool = True):
     """Build the architecture and load trusted weights (safetensors preferred, else verified .pth)."""
-    import torch
-
     get_spec(model_id)
     paths = weight_paths(model_id, wdir)
+    if not paths["safetensors"].exists() and not paths["pth"].exists():
+        if not download:
+            raise ModelWeightsError(
+                f"Weights for '{model_id}' not found in {paths['pth'].parent}. Run `qbl download-model` first."
+            )
+        download_weights(model_id, wdir)
+    import torch
+
     model = build_xdxd_unet_vgg16()
     if paths["safetensors"].exists():
         from safetensors.torch import load_file
 
         state = load_file(str(paths["safetensors"]))
     else:
-        if not paths["pth"].exists():
-            if not download:
-                raise ModelWeightsError(
-                    f"Weights for '{model_id}' not found in {paths['pth'].parent}. "
-                    "Run `qbl download-model` first."
-                )
-            download_weights(model_id, wdir)
         ckpt = torch.load(paths["pth"], map_location="cpu", weights_only=True)
         state = ckpt.get("state_dict", ckpt) if isinstance(ckpt, dict) else ckpt
         state = {k.removeprefix("module."): v for k, v in state.items()}

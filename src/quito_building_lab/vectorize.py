@@ -141,7 +141,7 @@ def _polygon_score(prob: np.ndarray, transform: Affine, poly_src: Polygon) -> fl
     """Mean probability inside a polygon (works for map and pixel coordinates)."""
     inv = ~transform
     xs, ys = poly_src.bounds[0::2], poly_src.bounds[1::2]
-    cols, rows = zip(*[inv * (x, y) for x in xs for y in ys], strict=True)
+    cols, rows = zip(*[inv @ (x, y) for x in xs for y in ys], strict=True)
     r0, c0 = max(0, int(np.floor(min(rows)))), max(0, int(np.floor(min(cols))))
     r1, c1 = min(prob.shape[0], int(np.ceil(max(rows)))), min(prob.shape[1], int(np.ceil(max(cols))))
     if r1 <= r0 or c1 <= c0:
