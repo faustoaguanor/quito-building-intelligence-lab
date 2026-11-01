@@ -7,12 +7,14 @@ One reusable Python engine, three delivery targets:
 | Target | What it is | Entry point |
 |---|---|---|
 | Local app / CLI | Tiled processing of large GeoTIFF orthophotos, CPU or CUDA, cadastral comparison, reports | `qbl run …` |
-| Streamlit demo | Real CPU inference on one small RGB image (≤ 5 MB, ≤ 512×512) | `app/streamlit_app.py` |
+| Streamlit demo | Real CPU inference on one small RGB image (≤ 5 MB, ≤ 512×512) — [live demo](https://quito-building-intelligence-lab-iwqerwtcb7lbmjx7yfd3rx.streamlit.app/) | `app/streamlit_app.py` |
 | GitHub Pages | Static portfolio with real example results | `site/` |
 
 > Independent open-source project. It does not imply endorsement by the Municipality of Quito, Streamlit, Hugging Face,
 > SpaceNet or any model provider. Visible roof geometry is **not** a legal cadastral boundary, and discrepancies are
 > review prompts — **not** proven cadastral errors, unregistered or illegal buildings.
+
+**Links:** [portfolio](https://faustoaguanor.github.io/quito-building-intelligence-lab/) · [Streamlit demo](https://quito-building-intelligence-lab-iwqerwtcb7lbmjx7yfd3rx.streamlit.app/) (may need a moment to wake up) · [ONNX model release](https://github.com/faustoaguanor/quito-building-intelligence-lab/releases/tag/model-onnx-v1). Not published on Hugging Face.
 
 ## What works (verified in this repository)
 
